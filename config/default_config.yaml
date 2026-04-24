@@ -122,7 +122,7 @@ normalize:
   method: "zscore"    # zscore | minmax | none
 
 markers:
-  exclude_scatter: false # true = exclure les paramètres de diffusion (FSC/SSC) des marqueurs
+  exclude_scatter: true # true = exclure les paramètres de diffusion (FSC/SSC) des marqueurs
   exclude_additional: ["TIME", "EVENT", "WIDTH", "HEIGHT"] # Liste de marqueurs supplémentaires à exclure (ex: ["Time", "Event_length"])
   keep_area_only: true    # Supprime les doublons -H (Height) ; garde -A (Area) + FSC/SSC/Time
   # Patterns toujours exclus du clustering FlowSOM (insensible à la casse)
@@ -136,7 +136,7 @@ downsampling:
 # Intégration de données (correction d'effet batch)
 # Désactivée par défaut pour éviter toute correction Harmony non souhaitée.
 data_integration:
-  enabled: true          # false = Harmony désactivé par défaut (recommandé).
+  enabled: false          # false = Harmony désactivé par défaut (recommandé).
                           # Activer uniquement si vous avez plusieurs acquisitions avec un effet
                           # batch technique avéré. Ne jamais aligner des marqueurs biologiques
                           # discriminants (CD34, CD45, CD117) — cela efface le signal MRD.
@@ -151,6 +151,47 @@ data_integration:
     max_iter: 10
     max_iter_kmeans: 10
     verbose: false
+
+# Analyse cohorte avancée (Experiment-level)
+# Pilotage des stratégies Harmony/PHATE/PhenoGraph via YAML.
+# Cette section est lue via config._extra['advanced_cohort_analysis'].
+advanced_cohort_analysis:
+  enabled: false
+  # Paramètres partagés (appliqués à chaque stratégie active)
+  channels: []               # [] = intersection automatique des canaux entre samples
+  source_masks: ["qc_pass"] # Masques source pour la concaténation cohorte
+  batch_key: "batch"        # Colonne de cohort_metadata utilisée pour les labels batch
+
+  harmony:
+    enabled: true
+    theta: 2.0
+    lambda_: 1.0
+    sigma: 0.1
+    nclust: null
+    max_iter_harmony: 10
+    max_iter_kmeans: 20
+    random_state: 42
+    store_corrected_channels: true
+    corrected_channel_prefix: "harmony_"
+
+  phate:
+    enabled: false
+    embedding_name: "phate_2d"
+    n_components: 2
+    knn: 10
+    decay: 40
+    t: "auto"
+    gamma: 1.0
+    random_state: 42
+    use_harmony_if_available: true
+
+  phenograph:
+    enabled: false
+    clustering_name: "phenograph"
+    k: 30
+    random_state: 42
+    use_harmony_if_available: true
+    min_rare_size: 30
 
 visualization:
   save_plots: true       # true = enregistrer les figures générées (heatmaps, UMAP, etc.)
@@ -262,7 +303,7 @@ patho_fcs_export:
   mrd_method: "jf"          # méthode utilisée pour Is_MRD : "flo" (méthode Flo) ou "jf" (méthode JF)
 
 batch:
-  enabled: true            # true = traiter chaque FCS du dossier patho individuellement (mode lot)
+  enabled: false            # true = traiter chaque FCS du dossier patho individuellement (mode lot)
 
 export_mode:
   # "standard" : tous les fichiers de sortie (FCS complet, CSV, JSON métadonnées, plots individuels, rapports, MRD)

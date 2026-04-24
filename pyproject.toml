@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.backends.legacy:build"
 
 [project]
-name = "flowsom_pipeline_pro"
-version = "1.0.0"
-description = "Pipeline d'analyse de cytométrie en flux MRD (Maladie Résiduelle Détectable) basé sur FlowSOM — architecture modulaire production-ready"
+name = "prisma-research"
+version = "0.1.0"
+description = "PRISMA Research — plateforme RUO de cytométrie en flux et spectrale (FlowSOM, UMAP, t-SNE, spectral unmixing, PySide6)"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Florian" }]
@@ -25,7 +25,7 @@ classifiers = [
 
 # Dépendances minimales CPU (sans GUI, sans GPU)
 dependencies = [
-    "numpy>=1.26,<2.0",    # 1.x requis par numba ; éviter numpy 2.x
+    "numpy>=1.26,<2.0",
     "pandas>=2.0",
     "scikit-learn>=1.3",
     "scipy>=1.11",
@@ -34,8 +34,12 @@ dependencies = [
     "anndata>=0.10",
     "pyyaml>=6.0",
     "tqdm>=4.65",
-    "loguru>=0.7",         # logging structuré
-    "psutil>=5.9",         # monitoring CPU/RAM
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies.prisma-gui]
+dependencies = [
+    "PySide6>=6.6",
 ]
 
 [project.optional-dependencies]
@@ -104,14 +108,11 @@ full = [
 flowsom-analyze = "flowsom_pipeline_pro.cli.main:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 exclude = ["tests*", "*.tests*"]
 
 [tool.setuptools.package-data]
-flowsom_pipeline_pro = [
-    "config/default_config.yaml.example",
-    "config/mrd_config.yaml",
-    "config/panels/*.yaml",
-]
+"*" = ["config/*.yaml", "config/panels/*.yaml"]
 
 # ── Outils de développement ────────────────────────────────────────────────────
 

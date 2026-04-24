@@ -14,6 +14,7 @@ from .clustering import (
     phase3_composite_selection,
 )
 from .metaclustering import find_optimal_clusters
+from .interfaces import INodeProcessor, IAnalysisStrategy, IExportStrategy
 
 __all__ = [
     "DataTransformer",
@@ -26,4 +27,7 @@ __all__ = [
     "phase1_silhouette_on_codebook",
     "phase2_bootstrap_stability",
     "phase3_composite_selection",
+    "INodeProcessor",
+    "IAnalysisStrategy",
+    "IExportStrategy",
 ]

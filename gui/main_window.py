@@ -113,6 +113,7 @@ from flowsom_pipeline_pro.gui.tabs.home_tab import HomeTab
 from flowsom_pipeline_pro.gui.widgets.log_console import LogConsole
 from flowsom_pipeline_pro.gui.widgets.toggle_switch import ToggleSwitch
 from flowsom_pipeline_pro.gui.widgets.settings_card import SettingsCard
+from flowsom_pipeline_pro.gui.widgets.parameter_tabs import ParameterDashboard
 
 # qtawesome — icônes vectorielles Font Awesome 5
 try:
@@ -1139,47 +1140,71 @@ class FlowSomAnalyzerPro(QMainWindow):
         tbl.addStretch()
         outer.addWidget(title_bar)
 
-        # Scroll pour le contenu
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(32, 24, 32, 24)
-        layout.setSpacing(16)
+        # ── Dashboard paramétrique central ────────────────────────────
+        # _config peut être None si _init_ui() s'exécute avant _load_default_config().
+        # On crée une config par défaut temporaire qui sera remplacée par load() plus tard.
+        if self._config is None:
+            from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig as _PC
+            self._config = _PC()
+        self._param_dashboard = ParameterDashboard(self._config)
+        self._param_dashboard.connect_live()
+        outer.addWidget(self._param_dashboard, 1)
 
-        # Grille 3 colonnes
-        col_layout = QHBoxLayout()
-        col_layout.setSpacing(20)
-
-        col1 = QVBoxLayout()
-        col2 = QVBoxLayout()
-        col3 = QVBoxLayout()
-
-        # ── Colonne 1 : FlowSOM + Transformation ─────────────────────
-        col1.addWidget(self._build_som_group())
-        col1.addWidget(self._build_transform_group())
-        col1.addStretch()
-
-        # ── Colonne 2 : Gating + Options ─────────────────────────────
-        col2.addWidget(self._build_gating_group())
-        col2.addWidget(self._build_markers_group())
-        col2.addWidget(self._build_options_group())
-        col2.addStretch()
-
-        # ── Colonne 3 : MRD + Harmony + Stratified DS ────────────────
-        col3.addWidget(self._build_mrd_group())
-        col3.addWidget(self._build_harmony_group())
-        col3.addWidget(self._build_stratified_ds_group())
-        col3.addStretch()
-
-        col_layout.addLayout(col1)
-        col_layout.addLayout(col2)
-        col_layout.addLayout(col3)
-        layout.addLayout(col_layout)
-
-        scroll.setWidget(content)
-        outer.addWidget(scroll, 1)
+        # ── Aliases de compatibilité → _sync_config_to_ui / _sync_ui_to_config
+        #    continuent à fonctionner sans modification
+        d = self._param_dashboard
+        self.spin_xdim = d.spin_xdim
+        self.spin_ydim = d.spin_ydim
+        self.spin_metaclusters = d.spin_metaclusters
+        self.spin_seed = d.spin_seed
+        self.spin_lr = d.spin_lr
+        self.spin_sigma = d.spin_sigma
+        self.chk_auto_clustering = d.chk_auto_clustering
+        self.combo_transform = d.combo_transform
+        self.spin_cofactor = d.spin_cofactor
+        self.combo_normalize = d.combo_normalize
+        self.chk_exclude_scatter = d.chk_exclude_scatter
+        self.chk_keep_area_only = d.chk_keep_area_only
+        self.edit_exclude_cols = d.edit_exclude_cols
+        self.chk_pregate = d.chk_pregate
+        self.combo_gate_mode = d.combo_gate_mode
+        self.chk_viable = d.chk_viable
+        self.chk_singlets = d.chk_singlets
+        self.chk_cd45 = d.chk_cd45
+        self.chk_cd34 = d.chk_cd34
+        self.chk_mode_blastes = d.chk_mode_blastes
+        self.combo_cd45_autogating_mode = d.combo_cd45_autogating_mode
+        self.combo_density_method = d.combo_density_method
+        self.spin_gmm_components = d.spin_gmm_components
+        self.combo_gmm_cov = d.combo_gmm_cov
+        self.spin_kde_finesse = d.spin_kde_finesse
+        self.spin_kde_sigma = d.spin_kde_sigma
+        self.spin_kde_seuil = d.spin_kde_seuil
+        self.combo_mrd_method = d.combo_mrd_method
+        self.combo_mrd_fcs_method = d.combo_mrd_fcs_method
+        self.spin_eln_min_events = d.spin_eln_min_events
+        self.spin_eln_positivity = d.spin_eln_positivity
+        self.spin_flo_multiplier = d.spin_flo_multiplier
+        self.spin_jf_max_normal = d.spin_jf_max_normal
+        self.spin_jf_min_patho = d.spin_jf_min_patho
+        self.chk_blast_filter = d.chk_blast_filter
+        self.chk_harmony = d.chk_harmony
+        self.edit_harmony_markers = d.edit_harmony_markers
+        self.spin_harmony_sigma = d.spin_harmony_sigma
+        self.spin_harmony_nclust = d.spin_harmony_nclust
+        self.spin_harmony_max_iter = d.spin_harmony_max_iter
+        self.spin_harmony_block = d.spin_harmony_block
+        self.chk_umap = d.chk_umap
+        self.chk_gpu = d.chk_gpu
+        self.chk_compare = d.chk_compare
+        self.chk_pop_mapping = d.chk_pop_mapping
+        self.chk_downsampling = d.chk_downsampling
+        self.spin_max_cells = d.spin_max_cells
+        self.chk_batch = d.chk_batch
+        self.combo_export_mode = d.combo_export_mode
+        self.chk_balance_conditions = d.chk_balance_conditions
+        self.spin_imbalance_ratio = d.spin_imbalance_ratio
+        self.chk_allow_oversampling = d.chk_allow_oversampling
 
         # Barre de navigation
         nav_bar = QWidget()
@@ -2641,6 +2666,10 @@ class FlowSomAnalyzerPro(QMainWindow):
         if c is None:
             return
 
+        # Recharge le ParameterDashboard si déjà construit
+        if hasattr(self, "_param_dashboard"):
+            self._param_dashboard.load(c)
+
         if hasattr(c, "paths"):
             if c.paths.healthy_folder:
                 self.drop_healthy.set_path(str(c.paths.healthy_folder))
@@ -2759,6 +2788,10 @@ class FlowSomAnalyzerPro(QMainWindow):
         c = self._config
         if c is None:
             return
+
+        # Flush le ParameterDashboard en premier pour garantir la cohérence
+        if hasattr(self, "_param_dashboard"):
+            self._param_dashboard.save()
 
         healthy = self.drop_healthy.path
         if healthy:

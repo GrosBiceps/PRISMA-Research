@@ -43,6 +43,17 @@ from .statistics import (
     assess_mrd_status,
     compare_conditions_per_cluster,
 )
+from .advanced_strategies import (
+    AdvancedCohortExecutor,
+    HarmonyStrategy,
+    HarmonyStrategyParams,
+    PHATEStrategy,
+    PHATEStrategyParams,
+    PhenoGraphStrategy,
+    PhenoGraphStrategyParams,
+    build_advanced_executor_from_config,
+    run_advanced_cohort_from_config,
+)
 
 __all__ = [
     # Population mapping
@@ -73,4 +84,14 @@ __all__ = [
     "compute_fold_change",
     "assess_mrd_status",
     "compare_conditions_per_cluster",
+    # Advanced cohort strategies
+    "AdvancedCohortExecutor",
+    "HarmonyStrategy",
+    "HarmonyStrategyParams",
+    "PHATEStrategy",
+    "PHATEStrategyParams",
+    "PhenoGraphStrategy",
+    "PhenoGraphStrategyParams",
+    "build_advanced_executor_from_config",
+    "run_advanced_cohort_from_config",
 ]

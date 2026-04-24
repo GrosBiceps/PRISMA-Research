@@ -682,6 +682,7 @@ class HomeTab(QWidget):
         # Priorité : node_mfi_matrix (médiane par nœud SOM, même source que le radar HTML)
         # Fallback : recalcul depuis result.data (moyenne, moins précis)
         self._mfi_data = None
+        self._mfi_data_raw = None
         self._marker_cols = []
         try:
             import numpy as np
@@ -712,6 +713,7 @@ class HomeTab(QWidget):
                     self._marker_cols = [c for c in numeric_cols if c not in _meta_cols]
                     if self._marker_cols:
                         self._mfi_data = df.groupby("FlowSOM_cluster")[self._marker_cols].mean()
+
         except Exception:
             pass
 
