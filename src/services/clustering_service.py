@@ -32,13 +32,26 @@ try:
     import harmonypy
 
     _HARMONY_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError) as _harmony_import_error:
+    # Capture aussi les erreurs OSError (DLL manquante, torch CUDA échoué, etc.)
     _HARMONY_AVAILABLE = False
     _logger_import = __import__("logging").getLogger("services.clustering")
-    _logger_import.warning(
-        "harmonypy non installé — intégration Harmony désactivée. "
-        "Installez-le avec : pip install harmonypy"
-    )
+    _error_msg = str(_harmony_import_error)
+    if "torch" in _error_msg.lower() or "dll" in _error_msg.lower() or "1114" in _error_msg:
+        _logger_import.warning(
+            "torch/harmonypy non fonctionnel (DLL manquante, CUDA non disponible, etc.) — "
+            "intégration Harmony désactivée. "
+            "Erreur: %s. "
+            "Vous pouvez réinstaller avec : pip install torch --index-url https://download.pytorch.org/whl/cpu",
+            _error_msg,
+        )
+    else:
+        _logger_import.warning(
+            "harmonypy non installé ou incompatible — intégration Harmony désactivée. "
+            "Erreur: %s. "
+            "Installez-le avec : pip install harmonypy",
+            _error_msg,
+        )
 
 from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
 from flowsom_pipeline_pro.config.constants import SCATTER_PATTERNS

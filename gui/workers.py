@@ -136,7 +136,9 @@ class LogCapture:
             type(parent).__name__ if parent else None,
         )
         if self._timer is not None:
-            _dbg.warning("[LogCapture.start_drain] timer already running — stopping old timer first")
+            _dbg.warning(
+                "[LogCapture.start_drain] timer already running — stopping old timer first"
+            )
             self._timer.stop()
             self._timer = None
         self._timer = QTimer(parent)

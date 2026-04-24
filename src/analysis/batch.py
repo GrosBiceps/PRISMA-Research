@@ -25,7 +25,7 @@ try:
     import harmonypy  # type: ignore
 
     _HARMONY_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError):
     _HARMONY_AVAILABLE = False
 
 
