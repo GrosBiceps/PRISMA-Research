@@ -1,14 +1,10 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-home_tab.py — Onglet Accueil MRD (résultats principaux).
+home_tab.py — Résumé de recherche pour PRISMA Research.
 
-Affiche après analyse :
-  - Informations patient / fichier
-  - Gauges MRD par méthode (selon le choix utilisateur)
-  - Tableau des nœuds SOM MRD positifs avec filtre par méthode
-  - Résumé clinique textuel
-
-Avant analyse : écran d'attente avec état des données chargées.
+L'onglet d'accueil expose un résumé générique des résultats du pipeline
+sans composants MRD dédiés. Il sert de page de synthèse pour les tâches de
+clustering, réduction dimensionnelle et analyse de population.
 """
 
 from __future__ import annotations
@@ -16,155 +12,115 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from PyQt5.QtCore import QTimer, Qt, pyqtSignal
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
-    QFrame,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
-    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt5.QtGui import QFont, QColor
 
-from flowsom_pipeline_pro.gui.widgets.mrd_gauge import MRDGauge
-from flowsom_pipeline_pro.gui.widgets.mrd_node_table import MRDNodeTable
-from flowsom_pipeline_pro.gui.adapters.mrd_adapter import adapt_mrd_result, adapt_all_nodes
 
-# ── PRISMA v2.0 palette (replaces Catppuccin Mocha) ──────────────────────────
-_SURFACE0 = "#0C1220"  # --surface
-_SURFACE1 = "#101825"  # --raised
-_BASE = "#080D18"  # --deep
-_MANTLE = "#04070D"  # --void
-_TEXT = "#EEF2F7"  # --paper
+_BASE = "#080D18"
+_MANTLE = "#04070D"
+_SURFACE0 = "#0C1220"
+_SURFACE1 = "#101825"
+_TEXT = "#EEF2F7"
 _SUBTEXT = "rgba(238,242,247,0.55)"
-_BLUE = "#5BAAFF"  # ch-v500 / info
-_GREEN = "#39FF8A"  # ch-fitc / accent
-_RED = "#FF3D6E"  # ch-apc  / danger
-_YELLOW = "#FFE032"  # ch-percp / warn
-_LAVENDER = "#7B52FF"  # ch-v450 / brand
-
-# Font used in all matplotlib figures
+_BLUE = "#5BAAFF"
+_GREEN = "#39FF8A"
+_LAVENDER = "#7B52FF"
 
 
 class HomeTab(QWidget):
-    """
-    Onglet Accueil — résumé MRD post-analyse.
-
-    Interfaces publiques :
-      load_result(result, method_used)  → affiche les résultats
-      show_waiting()                    → revient à l'écran d'attente
-
-    Signaux :
-      curation_changed()  → émis après toute modification de validation experte
-                            (ajout/suppression de nœud). MainWindow l'écoute pour
-                            patcher le HTML et mettre à jour son état interne.
-    """
+    """Résumé générique des résultats de recherche."""
 
     curation_changed = pyqtSignal()
     expert_focus_curation_applied = pyqtSignal(dict)
     verification_commit_requested = pyqtSignal(str)
-    open_html_requested = pyqtSignal(str)  # str = "blast" | "radar" | "main"
+    open_html_requested = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._gauges: List[MRDGauge] = []
-        # État du toggle dénominateur MRD
-        # False = toutes cellules patho  |  True = cellules patho CD45+ seulement
-        self._denom_cd45_only: bool = False
-        self._raw_mrd_result: Any = None  # MRDResult brut stocké pour recalcul
+        self._result: Any = None
         self._current_method: str = "all"
-        # Débounce des notifications de curation pour éviter le lag UI
-        # (patch HTML/FCS coûteux déclenché dans MainWindow).
+        self._last_gauges_data: List[Dict[str, Any]] = []
+        self._validation_status: str = "Aucune validation"
+        self._html_bar_visible: bool = True
         self._curation_emit_timer = QTimer(self)
         self._curation_emit_timer.setSingleShot(True)
         self._curation_emit_timer.timeout.connect(self.curation_changed.emit)
         self._build_ui()
-
-    def _schedule_curation_changed(self) -> None:
-        """Agrège les changements rapides KEEP/DISCARD en une seule notification."""
-        self._curation_emit_timer.start(500)
-
-    # ------------------------------------------------------------------
-    # Construction UI
-    # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Stack : page 0 = attente, page 1 = résultats
-        from PyQt5.QtWidgets import QStackedWidget
-
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_waiting_page())
         self._stack.addWidget(self._build_results_page())
+        self._stack.setCurrentIndex(0)
         root.addWidget(self._stack)
 
-        self._stack.setCurrentIndex(0)
-
     def _build_waiting_page(self) -> QWidget:
-        """Écran placeholder avant analyse."""
         page = QWidget()
         page.setObjectName("waitingPage")
-        page.setStyleSheet("""
-            QWidget#waitingPage {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #080D18, stop:1 #04070D);
-            }
-        """)
+        page.setStyleSheet(
+            "QWidget#waitingPage {"
+            f"background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {_BASE}, stop:1 {_MANTLE});"
+            "}"
+        )
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignCenter)
         layout.setContentsMargins(24, 24, 24, 32)
         layout.setSpacing(20)
 
-        # Conteneur principal
         container = QWidget()
-        container.setObjectName("waitingContainer")
         container.setMinimumWidth(820)
         container.setMaximumWidth(980)
-        container.setStyleSheet("""
-            QWidget#waitingContainer {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(16, 24, 37, 0.90), stop:1 rgba(12, 18, 32, 0.90));
-                border-radius: 0px;
-                border: 1px solid rgba(255, 255, 255, 0.055);
-                border-top: 1px solid rgba(123, 82, 255, 0.35);
-            }
-        """)
+        container.setStyleSheet(
+            "QWidget {"
+            f"background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {_SURFACE1}, stop:1 {_SURFACE0});"
+            "border: 1px solid rgba(255, 255, 255, 0.055);"
+            "border-top: 1px solid rgba(123, 82, 255, 0.35);"
+            "}"
+        )
         c_layout = QVBoxLayout(container)
         c_layout.setContentsMargins(36, 32, 36, 28)
-        c_layout.setSpacing(20)
+        c_layout.setSpacing(18)
 
-        badge = QLabel("PRÊT POUR L'ANALYSE")
+        badge = QLabel("PRISMA RESEARCH")
         badge.setAlignment(Qt.AlignCenter)
         badge.setStyleSheet(
             "background: rgba(123, 82, 255, 0.14); color: #EEF2F7; "
             "border: 1px solid rgba(123, 82, 255, 0.35); "
-            "border-radius: 0px; padding: 6px 14px; "
-            "font-family: 'Consolas', 'Cascadia Code', monospace; "
+            "padding: 6px 14px; font-family: 'Consolas', 'Cascadia Code', monospace; "
             "font-size: 8.5pt; font-weight: 600; letter-spacing: 0.16em;"
         )
         c_layout.addWidget(badge, alignment=Qt.AlignHCenter)
 
-        title = QLabel("FlowSOM MRD Analyzer")
+        title = QLabel("Analyse de populations et clustering")
         title.setFont(QFont("Segoe UI", 27, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #EEF2F7; background: transparent;")
+        title.setStyleSheet(f"color: {_TEXT}; background: transparent;")
         c_layout.addWidget(title)
 
         sub = QLabel(
-            "Configurez vos dossiers FCS et paramètres, puis lancez le pipeline.\n"
-            "L'accueil affichera automatiquement les résultats MRD dès la fin du calcul."
+            "Chargez vos échantillons, lancez la réduction dimensionnelle et le clustering, "
+            "puis inspectez les populations détectées dans l'onglet résultats."
         )
         sub.setAlignment(Qt.AlignCenter)
         sub.setStyleSheet(
             "color: #EEF2F7; background: transparent;"
-            "font-size: 11pt; font-family: 'Segoe UI', 'Segoe UI', sans-serif;"
+            "font-size: 11pt; font-family: 'Segoe UI', sans-serif;"
         )
         sub.setWordWrap(True)
         c_layout.addWidget(sub)
@@ -174,928 +130,241 @@ class HomeTab(QWidget):
         sep.setStyleSheet("color: rgba(255,255,255,0.055); max-height: 1px;")
         c_layout.addWidget(sep)
 
-        body = QWidget()
-        body.setObjectName("waitingBody")
-        body.setStyleSheet("QWidget#waitingBody { background: transparent; }")
-        body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(18)
+        row = QHBoxLayout()
+        row.setSpacing(18)
+        for title_text, body_text, accent in (
+            ("Étape 1", "Importer les FCS et vérifier les métadonnées.", _GREEN),
+            ("Étape 2", "Lancer la réduction dimensionnelle et le clustering.", _BLUE),
+            ("Étape 3", "Explorer les populations et exporter les résultats.", _LAVENDER),
+        ):
+            row.addWidget(self._make_step_card(title_text, body_text, accent))
 
-        left = QWidget()
-        left.setObjectName("waitingLeftCard")
-        left.setStyleSheet(
-            "QWidget#waitingLeftCard {"
-            "background: rgba(16, 24, 37, 0.88);"
-            "border-radius: 0px;"
-            "border: 1px solid rgba(255, 255, 255, 0.055);"
-            "border-top: 1px solid rgba(57, 255, 138, 0.30);"
-            "}"
-        )
-        left_v = QVBoxLayout(left)
-        left_v.setContentsMargins(20, 18, 20, 18)
-        left_v.setSpacing(12)
-
-        left_title = QLabel("Étapes avant lancement")
-        left_title.setStyleSheet(
-            "color: #EEF2F7; font-size: 9pt; font-weight: 700; background: transparent;"
-            "font-family: 'Consolas', 'Cascadia Code', monospace; letter-spacing: 0.12em;"
-        )
-        left_v.addWidget(left_title)
-
-        def _step_line(num: str, text: str) -> QLabel:
-            lbl = QLabel(f"{num}. {text}")
-            lbl.setWordWrap(True)
-            lbl.setStyleSheet(
-                "color: #EEF2F7; font-size: 9pt; background: transparent;"
-                "font-family: 'Consolas', 'Cascadia Code', monospace;"
-            )
-            return lbl
-
-        left_v.addWidget(_step_line("1", "Importer les dossiers FCS (sain et pathologique)."))
-        left_v.addWidget(_step_line("2", "Vérifier les paramètres SOM, MRD et pré-gating."))
-        left_v.addWidget(_step_line("3", "Cliquer sur Lancer le Pipeline dans l'étape Exécution."))
-
-        tip = QLabel(
-            "Conseil: si vous relancez une analyse, les checkpoints accélèrent les recalculs."
-        )
-        tip.setWordWrap(True)
-        tip.setStyleSheet(
-            "color: #EEF2F7; font-size: 8.5pt; "
-            "font-family: 'Consolas', 'Cascadia Code', monospace;"
-            "background: rgba(123, 82, 255, 0.08);"
-            "border: 1px solid rgba(123, 82, 255, 0.22); border-radius: 0px; padding: 10px;"
-        )
-        left_v.addWidget(tip)
-        left_v.addStretch()
-
-        right = QWidget()
-        right.setObjectName("waitingRightCard")
-        right.setStyleSheet(
-            "QWidget#waitingRightCard {"
-            "background: rgba(16, 24, 37, 0.88);"
-            "border-radius: 0px;"
-            "border: 1px solid rgba(255, 255, 255, 0.055);"
-            "border-top: 1px solid rgba(91, 170, 255, 0.30);"
-            "}"
-        )
-        right_v = QVBoxLayout(right)
-        right_v.setContentsMargins(20, 18, 20, 18)
-        right_v.setSpacing(12)
-
-        right_title = QLabel("Ce qui apparaîtra ici après calcul")
-        right_title.setStyleSheet(
-            "color: #EEF2F7; font-size: 9pt; font-weight: 700; background: transparent;"
-            "font-family: 'Consolas', 'Cascadia Code', monospace; letter-spacing: 0.12em;"
-        )
-        right_v.addWidget(right_title)
-
-        features = [
-            "Résultat MRD par méthode (gauges JF / Flo / ELN)",
-            "Conclusion clinique synthétique positive/négative",
-            "Tableau des nœuds SOM MRD positifs avec filtres",
-            "Profils radar d'expression pour les nœuds détectés",
-        ]
-        for feat in features:
-            lbl = QLabel(f"• {feat}")
-            lbl.setWordWrap(True)
-            lbl.setStyleSheet(
-                "color: #EEF2F7; font-size: 9pt; background: transparent;"
-                "font-family: 'Consolas', 'Cascadia Code', monospace;"
-            )
-            right_v.addWidget(lbl)
-
-        right_v.addStretch()
-
-        body_layout.addWidget(left, 1)
-        body_layout.addWidget(right, 1)
-        c_layout.addWidget(body)
-
-        footer = QLabel("Statut actuel: en attente d'une exécution du pipeline")
-        footer.setAlignment(Qt.AlignCenter)
-        footer.setStyleSheet(
-            "color: #EEF2F7; background: transparent;"
-            "font-size: 8.8pt; font-weight: 500;"
-            "font-family: 'Consolas', 'Cascadia Code', monospace; letter-spacing: 0.06em;"
-        )
-        c_layout.addWidget(footer)
-
-        layout.addWidget(container, alignment=Qt.AlignCenter)
+        c_layout.addLayout(row)
+        c_layout.addStretch()
+        layout.addWidget(container)
         return page
 
+    def _make_step_card(self, title: str, text: str, accent: str) -> QWidget:
+        card = QWidget()
+        card.setMinimumHeight(150)
+        card.setStyleSheet(
+            "QWidget {"
+            f"background: rgba(16, 24, 37, 0.88); border: 1px solid rgba(255,255,255,0.055);"
+            f"border-top: 1px solid {accent};"
+            "}"
+        )
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
+
+        lbl_title = QLabel(title)
+        lbl_title.setStyleSheet(
+            "color: #EEF2F7; font-size: 9pt; font-weight: 700; background: transparent;"
+            "font-family: 'Consolas', 'Cascadia Code', monospace; letter-spacing: 0.12em;"
+        )
+        layout.addWidget(lbl_title)
+
+        lbl_body = QLabel(text)
+        lbl_body.setWordWrap(True)
+        lbl_body.setStyleSheet(f"color: {_TEXT}; background: transparent; font-size: 10pt;")
+        layout.addWidget(lbl_body)
+        layout.addStretch()
+        return card
+
     def _build_results_page(self) -> QWidget:
-        """Page principale des résultats MRD."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._header = QWidget()
+        self._header.setObjectName("resultsHeader")
+        self._header.setStyleSheet(
+            "QWidget#resultsHeader {"
+            f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {_SURFACE0}, stop:1 {_SURFACE1});"
+            "border-bottom: 1px solid rgba(255,255,255,0.05);"
+            "}"
+        )
+        header_layout = QHBoxLayout(self._header)
+        header_layout.setContentsMargins(20, 16, 20, 16)
+        header_layout.setSpacing(12)
+
+        left = QVBoxLayout()
+        self.lbl_title = QLabel("Résumé de l'analyse")
+        self.lbl_title.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        self.lbl_title.setStyleSheet(f"color: {_TEXT}; background: transparent;")
+        self.lbl_status = QLabel("En attente de résultats")
+        self.lbl_status.setStyleSheet(f"color: {_SUBTEXT}; background: transparent;")
+        left.addWidget(self.lbl_title)
+        left.addWidget(self.lbl_status)
+        header_layout.addLayout(left, 1)
+
+        self.btn_open_report = QPushButton("Ouvrir le rapport")
+        self.btn_open_report.setObjectName("primaryBtn")
+        self.btn_open_report.clicked.connect(lambda: self.open_html_requested.emit("main"))
+        header_layout.addWidget(self.btn_open_report)
+
+        layout.addWidget(self._header)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(20, 18, 20, 18)
+        body_layout.setSpacing(12)
+
+        cards = QWidget()
+        cards_layout = QHBoxLayout(cards)
+        cards_layout.setContentsMargins(0, 0, 0, 0)
+        cards_layout.setSpacing(12)
+
+        self.card_cells = self._metric_card("Cellules")
+        self.card_clusters = self._metric_card("Métaclusters")
+        self.card_elapsed = self._metric_card("Durée")
+        self.card_outputs = self._metric_card("Exports")
+
+        for card in (self.card_cells, self.card_clusters, self.card_elapsed, self.card_outputs):
+            cards_layout.addWidget(card)
+
+        body_layout.addWidget(cards)
+
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setMinimumHeight(320)
+        self.details.setStyleSheet(
+            "QTextEdit {"
+            f"background: {_MANTLE}; color: {_TEXT}; border: 1px solid rgba(255,255,255,0.05);"
+            "font-family: 'Consolas', 'Cascadia Code', monospace; font-size: 9.5pt;"
+            "}"
+        )
+        body_layout.addWidget(self.details, 1)
+
+        self.validation_bar = QFrame()
+        self.validation_bar.setVisible(True)
+        self.validation_bar.setStyleSheet(
+            "QFrame {"
+            "background: rgba(123, 82, 255, 0.10);"
+            "border: 1px solid rgba(123, 82, 255, 0.22);"
+            "}"
+        )
+        validation_layout = QHBoxLayout(self.validation_bar)
+        validation_layout.setContentsMargins(14, 10, 14, 10)
+        self.lbl_validation = QLabel("Aucune validation")
+        self.lbl_validation.setStyleSheet(f"color: {_TEXT}; background: transparent;")
+        validation_layout.addWidget(self.lbl_validation)
+        validation_layout.addStretch()
+        body_layout.addWidget(self.validation_bar)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"QScrollArea {{ background: {_BASE}; border: none; }}")
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(body)
+        layout.addWidget(scroll, 1)
 
-        content = QWidget()
-        content.setStyleSheet(f"background: {_BASE};")
-        self._results_layout = QVBoxLayout(content)
-        self._results_layout.setContentsMargins(20, 20, 20, 20)
-        self._results_layout.setSpacing(16)
+        return page
 
-        # ── Infos patient ──
-        self._patient_card = self._build_patient_card()
-        self._results_layout.addWidget(self._patient_card)
-
-        # ── Bouton HTML spider plot ELN (visible uniquement si mode ELN actif) ──
-        self._eln_btn_bar = self._build_eln_html_bar()
-        self._results_layout.addWidget(self._eln_btn_bar)
-        self._eln_btn_bar.hide()
-
-        # ── Bande de décision clinique (priorité de lecture) ──
-        self._summary_card = self._build_summary_card()
-        self._results_layout.addWidget(self._summary_card, 0)
-
-        # ── Barre de contrôle dénominateur MRD ──
-        self._denom_bar = self._build_denom_bar()
-        self._results_layout.addWidget(self._denom_bar)
-
-        # ── Gauges MRD ──
-        self._gauge_container = QWidget()
-        self._gauge_container.setStyleSheet("background: transparent;")
-        # Fixed verticalement : les gauges ont une hauteur naturelle et ne
-        # doivent JAMAIS voler de l'espace à la grille de validation en dessous.
-        self._gauge_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._gauge_row = QHBoxLayout(self._gauge_container)
-        self._gauge_row.setContentsMargins(0, 0, 0, 0)
-        self._gauge_row.setSpacing(12)
-        # stretch=0 : prend uniquement sa hauteur naturelle (sizeHint)
-        self._results_layout.addWidget(self._gauge_container, 0)
-
-        # ── Tableau nœuds MRD (grille de validation) ──
-        self._node_table = MRDNodeTable()
-        self._node_table.combo_filter.currentIndexChanged.connect(self._on_node_filter_changed)
-        self._node_table.curated_ratio_changed.connect(self._on_curated_ratio_changed)
-        self._node_table.manually_added_nodes_changed.connect(self._on_manually_added_nodes_changed)
-        self._node_table.expert_focus_curation_applied.connect(
-            self._on_expert_focus_curation_applied
+    def _metric_card(self, title: str) -> QWidget:
+        card = QFrame()
+        card.setObjectName("metricCard")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        card.setMinimumHeight(92)
+        card.setStyleSheet(
+            "QFrame#metricCard {"
+            f"background: {_SURFACE1}; border: 1px solid rgba(255,255,255,0.055);"
+            "border-top: 1px solid rgba(91, 170, 255, 0.28);"
+            "}"
         )
-        self._node_table.verification_commit_requested.connect(
-            self._on_verification_commit_requested
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(4)
+
+        lbl_title = QLabel(title)
+        lbl_title.setStyleSheet(
+            "color: rgba(238,242,247,0.65); background: transparent;"
+            "font-size: 8.5pt; letter-spacing: 0.08em; text-transform: uppercase;"
         )
-        # Expanding/Expanding : la grille de validation réclame tout l'espace
-        # vertical restant. setMinimumHeight est le filet de sécurité absolu
-        # (déjà défini dans MRDNodeTable.__init__, répété ici par cohérence).
-        self._node_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._node_table.setMinimumHeight(400)
-        # stretch=1 : reçoit tout l'espace vertical non attribué par les
-        # widgets à stretch=0 au-dessus (patient_card, denom_bar, gauges, summary).
-        self._results_layout.addWidget(self._node_table, 1)
-
-        # Pas de addStretch() ici : le stretch=1 sur _node_table absorbe déjà
-        # tout l'espace résiduel. Un stretch supplémentaire comprimerait la grille.
-
-        # Données MFI stockées pour les spider plots
-        self._mfi_data: Any = None
-        self._marker_cols: List[str] = []
-        self._mrd_nodes_all: List[Dict] = []
-
-        scroll.setWidget(content)
-        return scroll
-
-    def _build_eln_html_bar(self) -> QWidget:
-        """Barre de raccourci vers le rapport HTML avec spider plot ELN."""
-        bar = QWidget()
-        bar.setObjectName("elnHtmlBar")
-        bar.setStyleSheet(f"""
-            QWidget#elnHtmlBar {{
-                background: rgba(255, 155, 61, 0.10);
-                border-radius: 0px;
-                border: 1px solid rgba(255, 155, 61, 0.40);
-                border-left: 2px solid rgba(255, 155, 61, 0.80);
-            }}
-        """)
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(12)
-
-        icon_lbl = QLabel("⬡")
-        icon_lbl.setFont(QFont("Segoe UI", 14))
-        icon_lbl.setStyleSheet("color: #FF9B3D; background: transparent;")
-        layout.addWidget(icon_lbl)
-
-        lbl = QLabel("MODE ELN — Porte Biologique 2022 activée")
-        lbl.setFont(QFont("Consolas", 8, QFont.Bold))
-        lbl.setStyleSheet("color: #FF9B3D; background: transparent; letter-spacing: 0.10em;")
-        layout.addWidget(lbl)
-        layout.addStretch()
-
-        _btn_style = """
-            QPushButton {{
-                background: rgba(255,155,61,0.18);
-                color: #FF9B3D;
-                border: 1px solid rgba(255,155,61,0.55);
-                border-radius: 0px;
-                padding: 0 14px;
-                font-size: 10px;
-                font-weight: 700;
-            }}
-            QPushButton:hover {{
-                background: rgba(255,155,61,0.30);
-                border-color: rgba(255,155,61,0.75);
-            }}
-            QPushButton:pressed {{
-                background: rgba(255,155,61,0.38);
-            }}
-        """
-
-        self.btn_eln_html = QPushButton("  Classification Blast MRD")
-        self.btn_eln_html.setFixedHeight(30)
-        self.btn_eln_html.setMinimumWidth(210)
-        self.btn_eln_html.setStyleSheet(_btn_style)
-        self.btn_eln_html.clicked.connect(lambda: self.open_html_requested.emit("blast"))
-        layout.addWidget(self.btn_eln_html)
-
-        self.btn_eln_radar = QPushButton("  Radar MRD Blastes")
-        self.btn_eln_radar.setFixedHeight(30)
-        self.btn_eln_radar.setMinimumWidth(180)
-        self.btn_eln_radar.setStyleSheet(_btn_style)
-        self.btn_eln_radar.clicked.connect(lambda: self.open_html_requested.emit("radar"))
-        layout.addWidget(self.btn_eln_radar)
-        return bar
-
-    def show_eln_html_bar(self, visible: bool) -> None:
-        """Affiche/masque la barre de raccourci ELN HTML."""
-        self._eln_btn_bar.setVisible(visible)
-
-    def _build_denom_bar(self) -> QWidget:
-        """Barre de contrôle explicite du dénominateur MRD actif."""
-        bar = QWidget()
-        bar.setObjectName("denomBar")
-        bar.setStyleSheet(f"""
-            QWidget#denomBar {{
-                background: rgba(12, 18, 32, 0.92);
-                border-radius: 0px;
-                border: 1px solid rgba(255,255,255,0.055);
-                border-top: 1px solid rgba(91,170,255,0.35);
-            }}
-        """)
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(12)
-
-        icon_lbl = QLabel("÷")
-        icon_lbl.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        icon_lbl.setStyleSheet("color: #5BAAFF; background: transparent;")
-        layout.addWidget(icon_lbl)
-
-        lbl = QLabel("MODE DÉNOMINATEUR")
-        lbl.setFont(QFont("Consolas", 8, QFont.Bold))
-        lbl.setStyleSheet("color: #EEF2F7; background: transparent; letter-spacing: 0.12em;")
-        layout.addWidget(lbl)
-
-        self.lbl_denom_active = QLabel("TOTAL PATHO")
-        self.lbl_denom_active.setAlignment(Qt.AlignCenter)
-        self.lbl_denom_active.setFixedHeight(24)
-        self.lbl_denom_active.setStyleSheet(
-            "color: #EEF2F7; background: rgba(91,170,255,0.14); "
-            "border: 1px solid rgba(91,170,255,0.34); border-radius: 0px; "
-            "padding: 0 10px; font-size: 10px; font-weight: 800; letter-spacing: 0.06em;"
+        lbl_value = QLabel("—")
+        lbl_value.setStyleSheet(
+            f"color: {_TEXT}; background: transparent; font-size: 18pt; font-weight: 700;"
         )
-        layout.addWidget(self.lbl_denom_active)
-
-        layout.addSpacing(6)
-
-        self.lbl_denom_status = QLabel("Toutes cellules pathologiques")
-        self.lbl_denom_status.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
-        self.lbl_denom_status.setStyleSheet("color: #EEF2F7; background: transparent;")
-        layout.addWidget(self.lbl_denom_status)
-
-        self.lbl_denom_count = QLabel("")
-        self.lbl_denom_count.setStyleSheet(
-            "color: #EEF2F7; background: transparent; font-size: 9px; "
-            "font-weight: 600; font-family: 'Consolas', 'Cascadia Code', monospace;"
-        )
-        layout.addWidget(self.lbl_denom_count)
-
-        layout.addStretch()
-
-        self.btn_toggle_denom = QPushButton("  Activer mode CD45+")
-        self.btn_toggle_denom.setEnabled(False)
-        self.btn_toggle_denom.setFixedHeight(30)
-        self.btn_toggle_denom.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(91,170,255,0.16);
-                color: #EEF2F7;
-                border: 1px solid rgba(91,170,255,0.42);
-                border-radius: 0px;
-                padding: 0 14px;
-                font-size: 10px;
-                font-weight: 700;
-            }}
-            QPushButton:hover {{
-                background: rgba(91,170,255,0.28);
-                border-color: rgba(91,170,255,0.60);
-            }}
-            QPushButton:pressed {{
-                background: rgba(91,170,255,0.34);
-                border-color: rgba(91,170,255,0.70);
-            }}
-            QPushButton:focus {{
-                background: rgba(91,170,255,0.24);
-                border-color: rgba(91,170,255,0.70);
-                outline: none;
-            }}
-            QPushButton:disabled {{
-                background: rgba(20,30,46,0.55);
-                color: #EEF2F7;
-                border-color: rgba(255,255,255,0.10);
-            }}
-            QPushButton:pressed {{
-                background: rgba(91,170,255,0.34);
-                border-color: rgba(91,170,255,0.70);
-            }}
-            QPushButton:focus {{
-                background: rgba(91,170,255,0.24);
-                border-color: rgba(91,170,255,0.70);
-                outline: none;
-            }}
-        """)
-        self.btn_toggle_denom.clicked.connect(self._toggle_mrd_denominator)
-        layout.addWidget(self.btn_toggle_denom)
-
-        return bar
-
-    def _build_patient_card(self) -> QWidget:
-        """Carte infos patient/fichier."""
-        card = QWidget()
-        card.setObjectName("patientCard")
-        card.setStyleSheet(f"""
-            QWidget#patientCard {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(16,24,37,0.94), stop:1 rgba(12,18,32,0.94));
-                border-radius: 0px;
-                border: 1px solid rgba(255,255,255,0.055);
-                border-top: 1px solid rgba(91,170,255,0.30);
-            }}
-        """)
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(20, 14, 20, 14)
-        layout.setSpacing(32)
-
-        def _info_block(label: str, attr: str) -> QWidget:
-            block = QWidget()
-            block.setStyleSheet("background: transparent;")
-            v = QVBoxLayout(block)
-            v.setContentsMargins(0, 0, 0, 0)
-            v.setSpacing(3)
-            lbl = QLabel(label.upper())
-            lbl.setStyleSheet(
-                f"color: #EEF2F7; font-size: 8px; background: transparent; "
-                f"font-weight: 700; letter-spacing: 0.1em;"
-            )
-            val = QLabel("—")
-            val.setFont(QFont("Segoe UI", 11, QFont.Bold))
-            val.setStyleSheet(f"color: {_TEXT}; background: transparent;")
-            val.setWordWrap(True)
-            setattr(self, attr, val)
-            v.addWidget(lbl)
-            v.addWidget(val)
-            return block
-
-        layout.addWidget(_info_block("Échantillon", "lbl_patient_stem"))
-
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.VLine)
-        sep1.setStyleSheet("color: rgba(255,255,255,0.055);")
-        layout.addWidget(sep1)
-
-        layout.addWidget(_info_block("Date", "lbl_patient_date"))
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.VLine)
-        sep2.setStyleSheet("color: rgba(255,255,255,0.055);")
-        layout.addWidget(sep2)
-
-        layout.addWidget(_info_block("Cellules totales", "lbl_patient_cells"))
-
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.VLine)
-        sep3.setStyleSheet("color: rgba(255,255,255,0.055);")
-        layout.addWidget(sep3)
-
-        layout.addWidget(_info_block("Cellules pathologiques", "lbl_patient_patho"))
-        layout.addStretch()
-
-        self.lbl_run_time = QLabel("")
-        self.lbl_run_time.setStyleSheet(
-            "color: #EEF2F7; font-size: 8.5px; background: transparent;"
-            "font-weight: 600; font-family: 'Consolas', 'Cascadia Code', monospace;"
-        )
-        self.lbl_run_time.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        layout.addWidget(self.lbl_run_time)
-
+        layout.addWidget(lbl_title)
+        layout.addWidget(lbl_value)
+        card._value_label = lbl_value  # type: ignore[attr-defined]
         return card
 
-    def _build_summary_card(self) -> QWidget:
-        """Bande de décision clinique prioritaire."""
-        card = QWidget()
-        card.setObjectName("summaryCard")
-        card.setStyleSheet(f"""
-            QWidget#summaryCard {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(20, 18, 36, 0.92), stop:1 rgba(12, 18, 32, 0.92));
-                border-radius: 0px;
-                border: 1px solid rgba(255,255,255,0.055);
-                border-left: 2px solid rgba(123,82,255,0.60);
-            }}
-        """)
-        v = QVBoxLayout(card)
-        v.setContentsMargins(20, 14, 20, 14)
-        v.setSpacing(5)
-
-        lbl = QLabel("DÉCISION CLINIQUE")
-        lbl.setFont(QFont("Consolas", 8, QFont.Bold))
-        lbl.setStyleSheet("color: #EEF2F7; background: transparent; letter-spacing: 0.12em;")
-        v.addWidget(lbl)
-
-        self.lbl_clinical = QLabel("—")
-        self.lbl_clinical.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        self.lbl_clinical.setWordWrap(True)
-        self.lbl_clinical.setStyleSheet(f"color: {_TEXT}; background: transparent;")
-        v.addWidget(self.lbl_clinical)
-
-        self.lbl_decision_ref = QLabel("")
-        self.lbl_decision_ref.setWordWrap(True)
-        self.lbl_decision_ref.setStyleSheet(
-            "color: #EEF2F7; background: transparent; font-size: 10.5px; font-weight: 600;"
-        )
-        v.addWidget(self.lbl_decision_ref)
-
-        self.lbl_validation_status = QLabel("")
-        self.lbl_validation_status.setWordWrap(True)
-        self.lbl_validation_status.setStyleSheet(
-            "color: #39FF8A; background: transparent; font-size: 10px; font-weight: 700;"
-        )
-        v.addWidget(self.lbl_validation_status)
-
-        self.lbl_decision_denom = QLabel("")
-        self.lbl_decision_denom.setWordWrap(True)
-        self.lbl_decision_denom.setStyleSheet(
-            "color: #EEF2F7; background: transparent; font-size: 10px;"
-        )
-        v.addWidget(self.lbl_decision_denom)
-
-        self.lbl_clinical_detail = QLabel("")
-        self.lbl_clinical_detail.setWordWrap(True)
-        self.lbl_clinical_detail.setStyleSheet(
-            "color: #EEF2F7; background: transparent; font-size: 10.5px;"
-        )
-        v.addWidget(self.lbl_clinical_detail)
-
-        return card
-
-    # ------------------------------------------------------------------
-    # Interface publique
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _set_card_value(card: QWidget, value: str) -> None:
+        label = getattr(card, "_value_label", None)
+        if label is not None:
+            label.setText(value)
 
     def show_waiting(self) -> None:
-        """Revient à l'écran d'attente (ex: avant un nouveau run)."""
         self._stack.setCurrentIndex(0)
+        self.lbl_title.setText("Résumé de l'analyse")
+        self.lbl_status.setText("En attente de résultats")
+        self.details.clear()
+        self._set_card_value(self.card_cells, "—")
+        self._set_card_value(self.card_clusters, "—")
+        self._set_card_value(self.card_elapsed, "—")
+        self._set_card_value(self.card_outputs, "—")
 
     def load_result(self, result: Any, method_used: str = "all") -> None:
-        """
-        Met à jour l'affichage avec un nouveau PipelineResult.
-
-        Args:
-            result: PipelineResult post-pipeline.
-            method_used: méthode MRD choisie ("all", "jf", "flo", "eln").
-        """
-        # Stocker le résultat brut pour le toggle dénominateur
-        self._raw_mrd_result = getattr(result, "mrd_result", None)
         self._current_method = method_used
-        self._denom_cd45_only = False  # Réinitialiser à chaque nouveau résultat
-        self._last_patient_stem = getattr(result, "patho_stem", "") or ""
+        self._result = result
+        self._last_gauges_data = []
 
-        # Configurer le bouton toggle selon la disponibilité du dénominateur CD45+
-        self._refresh_denom_bar()
-
-        data = adapt_mrd_result(result, method_used)
-
-        if not data["has_data"]:
+        if result is None or not getattr(result, "success", False):
             self.show_waiting()
+            self.lbl_status.setText("Aucun résultat disponible")
             return
-
-        # Stocker les données MFI pour les spider plots
-        # Priorité : node_mfi_matrix (médiane par nœud SOM, même source que le radar HTML)
-        # Fallback : recalcul depuis result.data (moyenne, moins précis)
-        self._mfi_data = None
-        self._mfi_data_raw = None
-        self._marker_cols = []
-        try:
-            import numpy as np
-
-            node_mfi = getattr(result, "node_mfi_matrix", None)
-            if node_mfi is not None and not node_mfi.empty:
-                self._mfi_data = node_mfi
-                self._marker_cols = list(node_mfi.columns)
-            else:
-                df = result.data
-                if df is not None and "FlowSOM_cluster" in df.columns:
-                    _meta_cols = {
-                        "FlowSOM_cluster",
-                        "FlowSOM_metacluster",
-                        "condition",
-                        "file_origin",
-                        "xGrid",
-                        "yGrid",
-                        "xNodes",
-                        "yNodes",
-                        "size",
-                        "Condition_Num",
-                        "Condition",
-                        "Timepoint",
-                        "Timepoint_Num",
-                    }
-                    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-                    self._marker_cols = [c for c in numeric_cols if c not in _meta_cols]
-                    if self._marker_cols:
-                        self._mfi_data = df.groupby("FlowSOM_cluster")[self._marker_cols].mean()
-
-        except Exception:
-            pass
-
-        self._update_patient_info(data["patient_info"])
-        self._update_gauges(data["gauges"])
-        self._last_gauges_data: List[Dict] = data["gauges"]  # exposé pour export dashboard
-        self._update_summary(data["gauges"], data["patient_info"])
-        self._update_node_table(data["nodes"], data["gauges"])
 
         self._stack.setCurrentIndex(1)
+        n_cells = int(getattr(result, "n_cells", 0) or 0)
+        n_metaclusters = int(getattr(result, "n_metaclusters", 0) or 0)
+        elapsed = float(getattr(result, "elapsed_seconds", 0.0) or 0.0)
+        output_files = getattr(result, "output_files", {}) or {}
+        warnings = list(getattr(result, "warnings", []) or [])
 
-    # ------------------------------------------------------------------
-    # Mise à jour des sous-widgets
-    # ------------------------------------------------------------------
+        self.lbl_title.setText("Résumé de l'analyse")
+        self.lbl_status.setText(f"Mode {method_used} · {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        self._set_card_value(self.card_cells, f"{n_cells:,}")
+        self._set_card_value(self.card_clusters, f"{n_metaclusters}")
+        self._set_card_value(self.card_elapsed, f"{elapsed:.1f}s")
+        self._set_card_value(self.card_outputs, f"{len(output_files)}")
 
-    def _update_patient_info(self, info: Dict) -> None:
-        self.lbl_patient_stem.setText(info.get("stem", "—") or "—")
-        self.lbl_patient_date.setText(info.get("date", "—") or "—")
-        n_cells = info.get("n_cells", 0)
-        n_patho = info.get("n_cells_patho", 0)
-        self.lbl_patient_cells.setText(f"{n_cells:,}" if n_cells else "—")
-        self.lbl_patient_patho.setText(f"{n_patho:,}" if n_patho else "—")
-        ts = info.get("timestamp", "")
-        self.lbl_run_time.setText(f"Analyse : {ts}" if ts else "")
+        lines: List[str] = []
+        summary_text = getattr(result, "summary", None)
+        if callable(summary_text):
+            try:
+                lines.append(summary_text())
+            except Exception:
+                pass
 
-    def _update_gauges(self, gauges: List[Dict]) -> None:
-        """Recrée les gauges selon les méthodes à afficher."""
-        # Vider les gauges existantes
-        while self._gauge_row.count():
-            item = self._gauge_row.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._gauges.clear()
-
-        for g_data in gauges:
-            gauge = MRDGauge(method_name=g_data["method"])
-            gauge.update_data(g_data)
-            gauge.setMinimumWidth(220)
-            gauge.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            self._gauge_row.addWidget(gauge)
-            self._gauges.append(gauge)
-
-    def _get_active_denom_text(self) -> str:
-        """Retourne une description lisible du dénominateur actif."""
-        mrd = self._raw_mrd_result
-        if mrd is None:
-            return "Total pathologique"
-
-        n_pre = getattr(mrd, "n_patho_pre_cd45", 0)
-        total_patho = n_pre if n_pre > 0 else getattr(mrd, "total_cells_patho", 0)
-        n_cd45pos = getattr(mrd, "n_patho_cd45pos", 0)
-
-        if self._denom_cd45_only:
-            return f"CD45+ pathologique ({n_cd45pos:,} cellules)"
-        return f"Total pathologique ({total_patho:,} cellules)"
-
-    def _update_summary(self, gauges: List[Dict], info: Dict) -> None:
-        """Génère le texte de conclusion clinique.
-
-        La conclusion est basée sur JF et Flo uniquement (pas ELN).
-        ELN est affiché en gauge mais ne dicte pas la conclusion clinique finale.
-        """
-        if not gauges:
-            self.lbl_clinical.setText("Aucune donnée MRD disponible")
-            self.lbl_decision_ref.setText("")
-            self.lbl_decision_denom.setText("")
-            self.lbl_clinical_detail.setText("")
-            return
-
-        # Exclure ELN de la conclusion principale
-        non_eln_gauges = [g for g in gauges if g["method"] not in ("ELN 2025", "ELN")]
-        ref_gauges = non_eln_gauges if non_eln_gauges else gauges
-
-        positives = [g for g in ref_gauges if g.get("positive") or g.get("low_level")]
-
-        if not positives:
-            self.lbl_clinical.setText("MRD Négative")
-            self.lbl_clinical.setStyleSheet(
-                f"color: {_GREEN}; background: transparent; font-size: 16px;"
+        if not lines:
+            lines.extend(
+                [
+                    "Résumé de pipeline",
+                    f"Cellules: {n_cells:,}",
+                    f"Métaclusters: {n_metaclusters}",
+                    f"Durée: {elapsed:.1f}s",
+                ]
             )
-            self.lbl_decision_ref.setText(
-                "Méthodes de référence concordantes: JF/FLO non détectées"
-            )
-            self.lbl_decision_denom.setText(f"Dénominateur actif: {self._get_active_denom_text()}")
-            details = [f"{g['method']} : {g['pct']:.4f} %" for g in gauges]
-            self.lbl_clinical_detail.setText("  ·  ".join(details))
-        else:
-            # La méthode de référence prioritaire est JF, puis Flo
-            priority = ["JF", "Flo"]
-            ref = None
-            for p in priority:
-                ref = next((g for g in positives if g["method"] == p), None)
-                if ref:
-                    break
-            if ref is None:
-                ref = max(positives, key=lambda g: g.get("pct", 0))
 
-            self.lbl_clinical.setText(f"MRD Positive — {ref['pct']:.4f} % ({ref['method']})")
-            self.lbl_clinical.setStyleSheet(
-                f"color: {_RED}; background: transparent; font-size: 16px;"
-            )
-            self.lbl_decision_ref.setText(
-                f"Méthode de référence retenue: {ref['method']} ({ref['pct']:.4f} %)"
-            )
-            self.lbl_decision_denom.setText(f"Dénominateur actif: {self._get_active_denom_text()}")
-            details = []
-            for g in gauges:
-                status = "POSITIF" if (g.get("positive") or g.get("low_level")) else "négatif"
-                details.append(f"{g['method']} : {g['pct']:.4f} % ({status})")
-            self.lbl_clinical_detail.setText("  ·  ".join(details))
+        if warnings:
+            lines.append("")
+            lines.append("Avertissements:")
+            lines.extend(f"- {warn}" for warn in warnings)
 
-    def _update_node_table(self, nodes: List[Dict], gauges: List[Dict]) -> None:
-        """Charge la grille de validation des nœuds MRD."""
-        available_methods = [g["method"] for g in gauges]
-        self._mrd_nodes_all = nodes
+        if output_files:
+            lines.append("")
+            lines.append("Fichiers produits:")
+            for key, path in output_files.items():
+                lines.append(f"- {key}: {path}")
 
-        # Dénominateur : total cellules viables (patho) pour le ratio validé
-        mrd = self._raw_mrd_result
-        n_pre = getattr(mrd, "n_patho_pre_cd45", 0) if mrd else 0
-        total_viable = n_pre if n_pre > 0 else (getattr(mrd, "total_cells_patho", 0) if mrd else 0)
+        self.details.setPlainText("\n".join(lines))
 
-        # Fournir TOUS les nœuds SOM (y compris non-MRD) à ExpertFocusDialog
-        all_patient_nodes = adapt_all_nodes(self._raw_mrd_result)
-        self._node_table.set_all_patient_nodes(all_patient_nodes if all_patient_nodes else nodes)
-
-        self._node_table.load_nodes(
-            nodes,
-            available_methods,
-            mfi_data=self._mfi_data,
-            marker_cols=self._marker_cols,
-            total_viable_cells=max(total_viable, 1),
-        )
-
-    def _on_curated_ratio_changed(self, method: str, ratio: float, n_mrd_cells: int) -> None:
-        """
-        Slot connecté à MRDNodeTable.curated_ratio_changed.
-
-        Met à jour (ou crée) une jauge "Validé" reflétant le ratio
-        recalculé après validation experte des nœuds.
-        Toutes les gauges existantes JF/Flo/ELN sont conservées.
-        """
-        # Chercher une jauge validée déjà présente.
-        # NOTE: la carte est créée avec method_name="Validé".
-        # Ancien bug: recherche sur "Curated" uniquement => doublons à chaque clic.
-        curated_candidates: List[MRDGauge] = [
-            g for g in self._gauges if g.method_name in ("Validé", "Curated")
-        ]
-
-        curated_gauge: Optional[MRDGauge] = curated_candidates[0] if curated_candidates else None
-
-        # Défensif: si des doublons existent déjà, on conserve la première jauge
-        # et on supprime les autres de l'UI.
-        if len(curated_candidates) > 1:
-            for dup in curated_candidates[1:]:
-                self._gauge_row.removeWidget(dup)
-                if dup in self._gauges:
-                    self._gauges.remove(dup)
-                dup.deleteLater()
-
-        if curated_gauge is None:
-            curated_gauge = MRDGauge(method_name="Validé")
-            curated_gauge.setMinimumWidth(220)
-            curated_gauge.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            self._gauge_row.addWidget(curated_gauge)
-            self._gauges.append(curated_gauge)
-
-        curated_gauge.update_data(
-            {
-                "pct": ratio,
-                "n_cells": n_mrd_cells,
-                "n_nodes": len(self._node_table.get_human_curated_results()),
-                "positive": ratio > 0.01,
-                "low_level": 0 < ratio <= 0.01,
-                "positivity_threshold": 0.01,
-            }
-        )
-        # Notifie MainWindow (déboucé) → patch HTML + inject curation
-        self._schedule_curation_changed()
-
-    def _on_manually_added_nodes_changed(self, manual_nodes: list) -> None:
-        """
-        Slot connecté à MRDNodeTable.manually_added_nodes_changed.
-
-        Rafraîchit les spider plots avec l'état courant complet (inclus tous
-        les nœuds retenus, pas seulement les manuels) et émet curation_changed
-        pour que MainWindow mette à jour l'HTML + son _result interne.
-        """
-        # Signale à MainWindow qu'une curation a eu lieu → patch HTML (déboucé)
-        self._schedule_curation_changed()
-
-    def _on_expert_focus_curation_applied(self, payload: Dict[str, Any]) -> None:
-        """Relaye immédiatement la curation Expert Focus pour synchronisation externe."""
-        self.expert_focus_curation_applied.emit(payload)
-
-    def _on_verification_commit_requested(self, filter_label: str) -> None:
-        """Relaye la demande explicite de validation finale à MainWindow."""
-        self.verification_commit_requested.emit(filter_label)
+    def show_eln_html_bar(self, visible: bool) -> None:
+        self._html_bar_visible = bool(visible)
+        self.validation_bar.setVisible(visible)
 
     def set_validation_status(self, method_label: str, filter_label: str) -> None:
-        """Affiche l'état de validation explicite dans le bandeau de décision."""
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.lbl_validation_status.setText(
-            f"Validation experte appliquée ({ts}) — Méthode FCS: {method_label.upper()} · Filtre: {filter_label}"
-        )
-
-    # ------------------------------------------------------------------
-    # Toggle dénominateur MRD
-    # ------------------------------------------------------------------
-
-    def _refresh_denom_bar(self) -> None:
-        """Met à jour l'état de la barre de contrôle dénominateur."""
-        mrd = self._raw_mrd_result
-        if mrd is None:
-            self.btn_toggle_denom.setEnabled(False)
-            self.lbl_denom_active.setText("TOTAL PATHO")
-            self.lbl_denom_status.setText("Toutes cellules pathologiques")
-            self.lbl_denom_count.setText("")
-            return
-
-        # n_patho_pre_cd45 = total patho avant gate CD45 (CD45+ + CD45-)
-        # Si non disponible (gate inactive), fallback sur total_cells_patho.
-        n_pre = getattr(mrd, "n_patho_pre_cd45", 0)
-        total_patho = n_pre if n_pre > 0 else getattr(mrd, "total_cells_patho", 0)
-        n_cd45pos = getattr(mrd, "n_patho_cd45pos", 0)
-
-        # Le toggle est disponible uniquement si les deux valeurs sont distinctes
-        cd45_available = n_cd45pos > 0 and n_cd45pos != total_patho
-
-        if self._denom_cd45_only:
-            self.lbl_denom_active.setText("CD45+ ACTIF")
-            self.lbl_denom_active.setStyleSheet(
-                "color: #d6fff0; background: rgba(137,220,235,0.20); "
-                "border: 1px solid rgba(137,220,235,0.45); border-radius: 6px; "
-                "padding: 0 10px; font-size: 10px; font-weight: 800; letter-spacing: 0.06em;"
-            )
-            self.lbl_denom_status.setText("Cellules pathologiques CD45+")
-            self.lbl_denom_status.setStyleSheet(
-                "color: #c7f6ff; background: transparent; font-size: 10px; font-weight: bold;"
-            )
-            self.lbl_denom_count.setText(f"({n_cd45pos:,} cellules)" if n_cd45pos > 0 else "")
-            btn_label = "  Revenir en mode total patho"
-        else:
-            self.lbl_denom_active.setText("TOTAL PATHO")
-            self.lbl_denom_active.setStyleSheet(
-                "color: #dbe7ff; background: rgba(137,180,250,0.20); "
-                "border: 1px solid rgba(137,180,250,0.42); border-radius: 6px; "
-                "padding: 0 10px; font-size: 10px; font-weight: 800; letter-spacing: 0.06em;"
-            )
-            self.lbl_denom_status.setText("Toutes cellules pathologiques")
-            self.lbl_denom_status.setStyleSheet(
-                "color: #d3def9; background: transparent; font-size: 10px; font-weight: bold;"
-            )
-            self.lbl_denom_count.setText(f"({total_patho:,} cellules)" if total_patho > 0 else "")
-            btn_label = "  Activer mode CD45+"
-
-        self.btn_toggle_denom.setText(btn_label)
-        self.btn_toggle_denom.setEnabled(cd45_available)
-
-    def _toggle_mrd_denominator(self) -> None:
-        """Bascule entre le dénominateur total patho et CD45+ patho."""
-        self._denom_cd45_only = not self._denom_cd45_only
-        self._refresh_denom_bar()
-
-        mrd = self._raw_mrd_result
-        if mrd is None:
-            return
-
-        # Recalculer les pourcentages MRD avec le nouveau dénominateur
-        new_gauges = self._recompute_gauges_with_denom(mrd, self._current_method)
-        self._update_gauges(new_gauges)
-        self._update_summary(new_gauges, {"stem": self._last_patient_stem})
-
-        # Conserver la curation experte en cours (Expert Focus / cartes MRD)
-        # lors du changement de dénominateur : on recalcule le ratio validé
-        # sur les nœuds actuellement gardés, avec le dénominateur actif.
-        active_denom = self._get_active_patho_denominator(mrd)
-        curated_nodes = (
-            self._node_table.get_human_curated_results() if hasattr(self, "_node_table") else []
-        )
-        curated_cells = int(sum(int(n.get("n_patho", 0)) for n in curated_nodes))
-        curated_ratio = (curated_cells / max(active_denom, 1) * 100.0) if active_denom > 0 else 0.0
-
-        # Mettre à jour le dénominateur interne de la table pour que les
-        # recalculs suivants (clic GARDER/ÉCARTER) restent cohérents.
-        if hasattr(self, "_node_table"):
-            self._node_table._total_viable_cells = max(active_denom, 1)
-            self._node_table._refresh_ratio_badge()
-
-        self._on_curated_ratio_changed("Curated", curated_ratio, curated_cells)
-
-        # Mettre à jour le compteur "Cellules pathologiques" dans la carte patient
-        n_cd45pos = getattr(mrd, "n_patho_cd45pos", 0)
-        n_pre = getattr(mrd, "n_patho_pre_cd45", 0)
-        total_patho = n_pre if n_pre > 0 else getattr(mrd, "total_cells_patho", 0)
-        displayed = n_cd45pos if self._denom_cd45_only else total_patho
-        if hasattr(self, "lbl_patient_patho") and displayed > 0:
-            suffix = " (CD45+)" if self._denom_cd45_only else ""
-            self.lbl_patient_patho.setText(f"{displayed:,}{suffix}")
-
-    def _get_active_patho_denominator(self, mrd: Any) -> int:
-        """Retourne le dénominateur pathologique actif selon le mode courant."""
-        n_pre = getattr(mrd, "n_patho_pre_cd45", 0)
-        total_patho = n_pre if n_pre > 0 else getattr(mrd, "total_cells_patho", 0)
-        n_cd45pos = getattr(mrd, "n_patho_cd45pos", 0)
-
-        if self._denom_cd45_only and n_cd45pos > 0:
-            return int(n_cd45pos)
-        if total_patho > 0:
-            return int(total_patho)
-        return 1
-
-    def _recompute_gauges_with_denom(self, mrd: Any, method_used: str) -> List[Dict]:
-        """
-        Recalcule les gauges MRD avec le dénominateur choisi.
-
-        Si _denom_cd45_only=True  → dénominateur = mrd.n_patho_cd45pos (CD45+ patho)
-        Sinon                     → dénominateur = mrd.n_patho_pre_cd45 (total patho avant gate)
-        """
-        n_pre = getattr(mrd, "n_patho_pre_cd45", 0)
-        total_patho = n_pre if n_pre > 0 else getattr(mrd, "total_cells_patho", 0)
-        n_cd45pos = getattr(mrd, "n_patho_cd45pos", 0)
-
-        denom = n_cd45pos if (self._denom_cd45_only and n_cd45pos > 0) else total_patho
-        if denom <= 0:
-            denom = max(total_patho, 1)
-
-        def _pct(n_cells: int) -> float:
-            return round(n_cells / denom * 100.0, 4) if denom > 0 else 0.0
-
-        gauges: List[Dict] = []
-        _show_jf = method_used in ("all", "jf")
-        _show_flo = method_used in ("all", "flo")
-        _show_eln = method_used == "eln"
-
-        if _show_jf:
-            n = getattr(mrd, "mrd_cells_jf", 0)
-            p = _pct(n)
-            gauges.append(
-                {
-                    "method": "JF",
-                    "pct": p,
-                    "n_cells": n,
-                    "n_nodes": getattr(mrd, "n_nodes_mrd_jf", 0),
-                    "positive": p > 0,
-                    "positivity_threshold": None,
-                }
-            )
-
-        if _show_flo:
-            n = getattr(mrd, "mrd_cells_flo", 0)
-            p = _pct(n)
-            gauges.append(
-                {
-                    "method": "Flo",
-                    "pct": p,
-                    "n_cells": n,
-                    "n_nodes": getattr(mrd, "n_nodes_mrd_flo", 0),
-                    "positive": p > 0,
-                    "positivity_threshold": None,
-                }
-            )
-
-        if _show_eln:
-            n = getattr(mrd, "mrd_cells_eln", 0)
-            p = _pct(n)
-            cfg = getattr(mrd, "config_snapshot", {})
-            eln_cfg = cfg.get("eln_standards", {}) if isinstance(cfg, dict) else {}
-            threshold = eln_cfg.get("clinical_positivity_pct", 0.1)
-            gauges.append(
-                {
-                    "method": "ELN 2025",
-                    "pct": p,
-                    "n_cells": n,
-                    "n_nodes": getattr(mrd, "n_nodes_mrd_eln", 0),
-                    "positive": p >= threshold,
-                    "low_level": (n > 0) and (p < threshold),
-                    "positivity_threshold": threshold,
-                }
-            )
-
-        return gauges
-
-    def _on_node_filter_changed(self) -> None:
-        """Appelé quand le filtre de méthode du tableau nœuds change (hook pour extensions futures)."""
-        pass
+        self._validation_status = f"{method_label} · {filter_label}"
+        self.lbl_validation.setText(self._validation_status)

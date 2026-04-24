@@ -107,7 +107,7 @@ except ImportError as _gpu_import_err:
 except Exception as _gpu_err:
     _GPU_AVAILABLE = False
     GPUFlowSOMEstimator = None
-    _logger.warning("GPUFlowSOMEstimator import échoué: %s", _gpu_err)
+    _logger.debug("GPUFlowSOMEstimator non disponible (pas de CUDA): %s", _gpu_err)
 
 
 def compute_optimal_rlen(n_cells: int, rlen_setting: Any = "auto") -> int:

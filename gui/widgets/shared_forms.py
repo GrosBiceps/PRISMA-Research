@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 shared_forms.py — Composants de formulaire réutilisables (PRISMA v2.0).
 
@@ -30,8 +30,8 @@ from PyQt5.QtWidgets import (
 
 # Import interne PRISMA
 try:
-    from flowsom_pipeline_pro.gui.widgets.toggle_switch import ToggleSwitch
-    from flowsom_pipeline_pro.gui.main_window import DarkComboBox
+    from gui.widgets.toggle_switch import ToggleSwitch
+    from gui.main_window import DarkComboBox
 except ImportError:
     # Fallback relatif (exécution directe / tests)
     import importlib, sys, os

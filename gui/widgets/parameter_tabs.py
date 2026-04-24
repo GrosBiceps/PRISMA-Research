@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 parameter_tabs.py — Dashboard paramétrique central PRISMA v2.0.
 
@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (
 
 # Imports PRISMA internes
 try:
-    from flowsom_pipeline_pro.gui.widgets.config_binding import (
+    from gui.widgets.config_binding import (
         CheckBinding,
         ComboBinding,
         ConfigBinder,
@@ -46,7 +46,7 @@ try:
         NClustBinding,
         SpinBinding,
     )
-    from flowsom_pipeline_pro.gui.widgets.shared_forms import (
+    from gui.widgets.shared_forms import (
         DarkComboBox,
         FormGrid,
         ToggleSwitch,
@@ -841,3 +841,868 @@ class ParameterDashboard(QWidget):
         params.setdefault("blast_phenotype_filter", {})["enabled"] = (
             self.chk_blast_filter.isChecked()
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Formulaires Wizard — PRISMA Research v3.0
+# Chaque classe est un QWidget autonome chargé dynamiquement dans le Wizard.
+# Aucune logique MRD/clinique — 100% RUO.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _form_scroll(widget: QWidget) -> QScrollArea:
+    sa = QScrollArea()
+    sa.setWidgetResizable(True)
+    sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    sa.setWidget(widget)
+    return sa
+
+
+def _section(vl: QVBoxLayout, text: str) -> None:
+    lbl = QLabel(text)
+    lbl.setObjectName("subtitleLabel")
+    lbl.setStyleSheet("color: #3A4458; font-size: 10px; font-weight: 700;"
+                      " letter-spacing: 2px; padding-top: 8px;")
+    vl.addWidget(lbl)
+
+
+# ── QC Forms ──────────────────────────────────────────────────────────────────
+
+class PeacoQCForm(QWidget):
+    """Paramètres PeacoQC (Quality Control sur signaux temporels)."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "PEACOQC — CONTRÔLE QUALITÉ TEMPOREL")
+
+        g, gl = _group("Paramètres de Détection")
+        fg = FormGrid()
+        self.spin_it = fg.add_spin(
+            "Itérations max :", 1, 50, 20, tooltip="Nombre d'itérations de convergence IQR."
+        )
+        self.spin_min_cells = fg.add_spin(
+            "Cellules min / bin :", 1, 500, 10,
+            tooltip="Nombre minimum de cellules par fenêtre temporelle."
+        )
+        self.dspin_cut_lower = fg.add_dspin(
+            "Seuil bas (IQR) :", 0.01, 1.0, 0.1, step=0.01,
+            tooltip="Percentile inférieur pour détection d'anomalie."
+        )
+        self.dspin_cut_upper = fg.add_dspin(
+            "Seuil haut (IQR) :", 0.01, 1.0, 0.9, step=0.01,
+            tooltip="Percentile supérieur pour détection d'anomalie."
+        )
+        self.toggle_remove = fg.add_toggle(
+            "Supprimer événements hors-QC", True,
+            tooltip="Si False: marque uniquement, ne supprime pas."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Canaux à Surveiller")
+        fg2 = FormGrid()
+        self.edit_channels = fg2.add_lineedit(
+            "Canaux (séparés par virgule) :",
+            "ex: FSC-A, SSC-A, CD45-FITC",
+            tooltip="Laisser vide = tous les canaux."
+        )
+        self.toggle_plot = fg2.add_toggle("Générer plots de QC", True)
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+class FlowAIForm(QWidget):
+    """Paramètres FlowAI (QC automatique basé sur anomalies de signal)."""
+
+    def __init__(self, mode: str = "flowai", parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "FLOWAI — DÉTECTION D'ANOMALIES")
+
+        g, gl = _group("Algorithme")
+        fg = FormGrid()
+        self.combo_anomaly = fg.add_combo(
+            "Méthode détection :", ["changepoint", "flowclean", "both"], "changepoint",
+            tooltip="Algorithme de détection d'anomalies temporelles."
+        )
+        self.spin_pen_value = fg.add_dspin(
+            "Pénalité changepoint :", 0.1, 100.0, 2.0, step=0.5,
+            tooltip="Sensibilité de l'algorithme changepoint (plus élevé = moins de détections)."
+        )
+        self.toggle_second_fraction = fg.add_toggle(
+            "Analyser fraction temporelle", True,
+            tooltip="Active l'analyse de distribution temporelle d'événements."
+        )
+        self.dspin_penalize = fg.add_dspin(
+            "Seuil de rejet (%) :", 0.01, 99.0, 1.0, step=0.5,
+            tooltip="% maximal d'événements rejetés avant alerte."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Canaux de Référence")
+        fg2 = FormGrid()
+        self.edit_ref_channels = fg2.add_lineedit(
+            "Canaux de référence :",
+            "ex: FSC-A, SSC-A",
+            tooltip="Canaux utilisés pour la détection d'anomalies de débit."
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+class InputQCTab(QWidget):
+    """Proxy — redirige vers PeacoQCForm ou FlowAIForm selon le mode."""
+
+    def __init__(self, mode: str = "peacoqc", parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(0, 0, 0, 0)
+        if mode == "flowai":
+            vl.addWidget(FlowAIForm())
+        else:
+            vl.addWidget(PeacoQCForm())
+
+
+# ── Gating Form ───────────────────────────────────────────────────────────────
+
+class GatingStrategyForm(QWidget):
+    """Configuration de la stratégie de gating."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "STRATÉGIE DE GATING")
+
+        g, gl = _group("Mode Auto-gating")
+        fg = FormGrid()
+        self.combo_method = fg.add_combo(
+            "Algorithme :", ["flowDensity", "OpenCyto", "mclust", "gmm"], "flowDensity",
+            tooltip="Algorithme de gating automatique."
+        )
+        self.combo_hierarchy = fg.add_combo(
+            "Hiérarchie :", ["Lymphocytes", "Leucocytes", "Custom"], "Lymphocytes",
+            tooltip="Hiérarchie de gating à appliquer."
+        )
+        self.toggle_pregate = fg.add_toggle(
+            "Pré-gating spectral (SSC/FSC)", True,
+            tooltip="Elimine les débris et doublets avant gating principal."
+        )
+        self.spin_margin = fg.add_dspin(
+            "Marge de tolérance :", 0.0, 0.5, 0.05, step=0.01,
+            tooltip="Tolérance relative sur les bornes de gate."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Populations Cibles")
+        fg2 = FormGrid()
+        self.edit_populations = fg2.add_lineedit(
+            "Populations à identifier (séparées par virgule) :",
+            "ex: Lymphocytes, Monocytes, Granulocytes",
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+class GatingTab(QWidget):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.addWidget(GatingStrategyForm())
+
+
+# ── Dim Reduction Forms ───────────────────────────────────────────────────────
+
+class ViSNEForm(QWidget):
+    """Paramètres viSNE (t-SNE Cytobank-flavored)."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "VISNE (t-SNE) — CYTOBANK")
+
+        g, gl = _group("Hyperparamètres t-SNE")
+        fg = FormGrid()
+        self.spin_perplexity = fg.add_dspin(
+            "Perplexité :", 2.0, 200.0, 30.0, step=1.0,
+            tooltip="Perplexité t-SNE. Recommandé: 5–50."
+        )
+        self.spin_iterations = fg.add_spin(
+            "Itérations :", 250, 10000, 1000,
+            tooltip="Nombre d'itérations de gradient descent."
+        )
+        self.spin_theta = fg.add_dspin(
+            "Theta (Barnes-Hut) :", 0.0, 1.0, 0.5, step=0.05,
+            tooltip="0 = exact t-SNE, 1 = rapide Barnes-Hut approximé."
+        )
+        self.spin_learning_rate = fg.add_dspin(
+            "Taux d'apprentissage :", 10.0, 1000.0, 200.0, step=10.0,
+            tooltip="Taux d'apprentissage du gradient. 'auto' recommandé."
+        )
+        self.combo_init = fg.add_combo(
+            "Initialisation :", ["pca", "random"], "pca",
+            tooltip="Initialisation PCA pour reproductibilité."
+        )
+        self.spin_seed = fg.add_spin(
+            "Seed aléatoire :", 0, 99999, 42, tooltip="Graine pour reproductibilité."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Sous-échantillonnage")
+        fg2 = FormGrid()
+        self.spin_max_events = fg2.add_spin(
+            "Max événements :", 1000, 500_000, 50_000,
+            tooltip="Nombre max de cellules pour t-SNE (coûteux O(n²)).",
+            suffix=" cel."
+        )
+        self.combo_sampling = fg2.add_combo(
+            "Méthode :", ["random", "density", "uniform"], "random",
+            tooltip="Méthode de sous-échantillonnage."
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+class UMAPForm(QWidget):
+    """Paramètres UMAP complets."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "UMAP — UNIFORM MANIFOLD APPROXIMATION")
+
+        g, gl = _group("Hyperparamètres UMAP")
+        fg = FormGrid()
+        self.spin_n_neighbors = fg.add_spin(
+            "N voisins :", 2, 500, 15,
+            tooltip="Taille du voisinage local. Petit = local, Grand = global."
+        )
+        self.spin_min_dist = fg.add_dspin(
+            "Distance minimale :", 0.0, 1.0, 0.1, step=0.01,
+            tooltip="Contrôle la compacité des clusters dans la projection."
+        )
+        self.spin_n_components = fg.add_spin(
+            "Dimensions :", 2, 3, 2, tooltip="2D ou 3D."
+        )
+        self.combo_metric = fg.add_combo(
+            "Métrique :", ["euclidean", "cosine", "correlation", "manhattan"],
+            "euclidean", tooltip="Métrique de distance dans l'espace d'origine."
+        )
+        self.spin_seed = fg.add_spin("Seed :", 0, 99999, 42)
+        self.toggle_gpu = fg.add_toggle(
+            "GPU (cuML UMAP)", True, tooltip="Utilise RAPIDS cuML si disponible."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Sous-échantillonnage")
+        fg2 = FormGrid()
+        self.spin_max_events = fg2.add_spin(
+            "Max événements :", 5000, 2_000_000, 200_000, suffix=" cel."
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+class PHATEForm(QWidget):
+    """Paramètres PHATE (Potential of Heat-diffusion for Affinity-based Trajectory Embedding)."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "PHATE — TRAJECTOIRES BIOLOGIQUES")
+
+        g, gl = _group("Hyperparamètres PHATE")
+        fg = FormGrid()
+        self.spin_k = fg.add_spin(
+            "K (voisins) :", 2, 200, 15,
+            tooltip="Voisins pour le noyau d'affinité."
+        )
+        self.spin_a = fg.add_dspin(
+            "Alpha (décroissance) :", 0.1, 100.0, 10.0, step=0.5,
+            tooltip="Contrôle la décroissance du noyau. Adaptatif si 0."
+        )
+        self.spin_n_components = fg.add_spin("Dimensions :", 2, 3, 2)
+        self.combo_knn_dist = fg.add_combo(
+            "Métrique KNN :", ["euclidean", "cosine", "precomputed"], "euclidean"
+        )
+        self.combo_mds_solver = fg.add_combo(
+            "Solveur MDS :", ["sgd", "smacof"], "sgd",
+            tooltip="sgd plus rapide, smacof plus précis."
+        )
+        self.spin_t = fg.add_spin(
+            "Diffusion t :", 1, 100, 10,
+            tooltip="Pas de diffusion. 'auto' si 0."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        vl.addStretch()
+
+
+# ── Clustering Forms ──────────────────────────────────────────────────────────
+
+class FlowSOMForm(QWidget):
+    """Paramètres FlowSOM complets."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "FLOWSOM — SELF-ORGANIZING MAP")
+
+        g, gl = _group("Grille SOM")
+        fg = FormGrid()
+        self.spin_xdim = fg.add_spin("Grille X :", 3, 50, 10, tooltip="Dimensions X de la carte SOM.")
+        self.spin_ydim = fg.add_spin("Grille Y :", 3, 50, 10, tooltip="Dimensions Y de la carte SOM.")
+        self.spin_rlen = fg.add_spin("Epochs (rlen) :", 1, 50, 10, tooltip="Epochs d'entraînement SOM.")
+        self.spin_seed = fg.add_spin("Seed :", 0, 99999, 42)
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Méta-clustering")
+        fg2 = FormGrid()
+        self.combo_metaclust = fg2.add_combo(
+            "Algorithme :", ["ConsensusClusterPlus", "kmeans", "hclust"], "ConsensusClusterPlus",
+            tooltip="Algorithme de méta-clustering des nœuds SOM."
+        )
+        self.spin_k = fg2.add_spin(
+            "K clusters cible :", 2, 60, 20,
+            tooltip="Nombre de méta-clusters finaux."
+        )
+        self.toggle_auto_k = fg2.add_toggle(
+            "Auto-optimisation K", False,
+            tooltip="Cherche K optimal par Elbow / Silhouette."
+        )
+        self.spin_k_max = fg2.add_spin(
+            "K max (auto) :", 5, 120, 40,
+            tooltip="Borne supérieure pour la recherche automatique de K."
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        g3, gl3 = _group("Downsampling Stratifié")
+        fg3 = FormGrid()
+        self.toggle_stratified = fg3.add_toggle(
+            "Downsampling stratifié", False,
+            tooltip="Équilibre la représentation des échantillons."
+        )
+        self.spin_cells_per_sample = fg3.add_spin(
+            "Cellules / échantillon :", 100, 100_000, 5_000, suffix=" cel."
+        )
+        gl3.addWidget(fg3)
+        vl.addWidget(g3)
+
+        vl.addStretch()
+
+
+class PhenoGraphForm(QWidget):
+    """Paramètres PhenoGraph."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "PHENOGRAPH — COMMUNITY DETECTION")
+
+        g, gl = _group("Hyperparamètres")
+        fg = FormGrid()
+        self.spin_k = fg.add_spin(
+            "K voisins :", 5, 200, 30,
+            tooltip="Taille du graphe KNN. Plus grand = communautés plus larges."
+        )
+        self.combo_metric = fg.add_combo(
+            "Métrique :", ["euclidean", "cosine", "manhattan"], "euclidean"
+        )
+        self.combo_clustering = fg.add_combo(
+            "Algo communauté :", ["louvain", "leiden"], "louvain",
+            tooltip="Algorithme de détection de communautés sur le graphe KNN."
+        )
+        self.spin_seed = fg.add_spin("Seed :", 0, 99999, 42)
+        self.toggle_jaccard = fg.add_toggle(
+            "Pondération Jaccard", True,
+            tooltip="Pondère les arêtes par similarité Jaccard des voisinages."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        vl.addStretch()
+
+
+class HDBSCANForm(QWidget):
+    """Paramètres HDBSCAN."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "HDBSCAN — HIERARCHICAL DENSITY-BASED CLUSTERING")
+
+        g, gl = _group("Hyperparamètres Densité")
+        fg = FormGrid()
+        self.spin_min_cluster_size = fg.add_spin(
+            "min_cluster_size :", 2, 10_000, 50,
+            tooltip="Taille minimale d'un cluster. Augmenter pour ignorer le bruit."
+        )
+        self.spin_min_samples = fg.add_spin(
+            "min_samples :", 1, 1_000, 10,
+            tooltip="Densité minimale. Si None, égal à min_cluster_size."
+        )
+        self.dspin_cluster_eps = fg.add_dspin(
+            "cluster_selection_epsilon :", 0.0, 10.0, 0.0, step=0.05,
+            tooltip="Epsilon pour la sélection de clusters (extension DBSCAN)."
+        )
+        self.combo_method = fg.add_combo(
+            "Méthode sélection :", ["eom", "leaf"], "eom",
+            tooltip="EOM = meilleur clustering global, leaf = clustering plus fin."
+        )
+        self.combo_metric = fg.add_combo(
+            "Métrique :", ["euclidean", "cosine", "manhattan", "l1", "l2"], "euclidean"
+        )
+        self.toggle_allow_noise = fg.add_toggle(
+            "Conserver cellules bruit (label -1)", True,
+            tooltip="Si False: les cellules bruit sont réassignées au cluster le plus proche."
+        )
+        self.toggle_approx_min = fg.add_toggle(
+            "approx_min_span_tree", True,
+            tooltip="Approximation du spanning tree pour performance."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        vl.addStretch()
+
+
+class PARCForm(QWidget):
+    """Paramètres PARC (Phenotyping by Accelerated Refined Community-partitioning)."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "PARC — CLUSTERING ULTRA-RAPIDE GRANDE ÉCHELLE")
+
+        g, gl = _group("Hyperparamètres PARC")
+        fg = FormGrid()
+        self.dspin_dist_std = fg.add_dspin(
+            "dist_std_local :", 1.0, 10.0, 2.0, step=0.5,
+            tooltip="Seuil local de distance pour l'élagage du graphe."
+        )
+        self.spin_jac_std = fg.add_dspin(
+            "jac_std_global :", 0.1, 3.0, 0.15, step=0.05,
+            tooltip="Seuil Jaccard global pour l'élagage."
+        )
+        self.spin_n_iter = fg.add_spin(
+            "Itérations Leiden :", 1, 20, 5,
+            tooltip="Itérations de raffinement communautaire Leiden."
+        )
+        self.spin_knn = fg.add_spin(
+            "KNN (HNSW) :", 5, 200, 30,
+            tooltip="Voisins pour l'index HNSW (FAISS)."
+        )
+        self.combo_metric = fg.add_combo(
+            "Métrique HNSW :", ["l2", "cosine", "ip"], "l2",
+            tooltip="l2=euclidien, cosine=cosinus, ip=produit interne."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        vl.addStretch()
+
+
+class SPADEForm(QWidget):
+    """Paramètres SPADE (Spanning-tree Progression of Density-normalized Events)."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "SPADE — ARBRE DE PROGRESSION CELLULAIRE")
+
+        g, gl = _group("Clustering SPADE")
+        fg = FormGrid()
+        self.spin_k = fg.add_spin(
+            "K clusters :", 5, 500, 200,
+            tooltip="Nombre de nœuds SPADE. Recommandé: 100–300."
+        )
+        self.dspin_density_factor = fg.add_dspin(
+            "Facteur densité :", 0.01, 1.0, 0.1, step=0.01,
+            tooltip="Fraction de cellules gardées par bin de densité."
+        )
+        self.spin_max_cells = fg.add_spin(
+            "Max cellules :", 10_000, 2_000_000, 500_000,
+            suffix=" cel.", tooltip="Cellules max après downsampling densité."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Spanning Tree & Visualisation")
+        fg2 = FormGrid()
+        self.combo_layout = fg2.add_combo(
+            "Layout arbre :", ["kruskal", "prim", "kamada_kawai"], "kruskal",
+            tooltip="Algorithme de spanning tree minimum."
+        )
+        self.toggle_show_tree = fg2.add_toggle("Afficher arbre dans canvas", True)
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+# ── Advanced Analysis Forms ───────────────────────────────────────────────────
+
+class CITRUSForm(QWidget):
+    """
+    Paramètres CITRUS (Cluster Identification, Characterization and
+    Regression using Unknown Subjects).
+
+    Sections:
+      1. Clustering (FlowSOM ou SPADE en amont)
+      2. Modèle prédictif (PAM / GLMNET)
+      3. Type de feature (Abondance / Médiane d'expression)
+      4. Cross-validation
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "CITRUS — CLUSTERING SUPERVISÉ BIOMARKERS")
+
+        # 1. Clustering en amont
+        g_clust, gl_clust = _group("Clustering Amont")
+        fg_c = FormGrid()
+        self.combo_clust_algo = fg_c.add_combo(
+            "Algorithme :", ["FlowSOM", "SPADE"], "FlowSOM",
+            tooltip="Algorithme de clustering utilisé avant CITRUS."
+        )
+        self.spin_k = fg_c.add_spin(
+            "K clusters :", 5, 200, 100,
+            tooltip="Nombre de clusters CITRUS avant élagage."
+        )
+        self.dspin_min_clust_size = fg_c.add_dspin(
+            "Taille min cluster (%) :", 0.001, 10.0, 0.5, step=0.1,
+            tooltip="Fraction minimale de cellules pour qu'un cluster soit retenu."
+        )
+        gl_clust.addWidget(fg_c)
+        vl.addWidget(g_clust)
+
+        # 2. Modèle prédictif
+        g_model, gl_model = _group("Modèle Prédictif")
+        fg_m = FormGrid()
+        self.combo_model = fg_m.add_combo(
+            "Modèle :", ["GLMNET", "PAM", "SVM"], "GLMNET",
+            tooltip="Modèle de régression/classification supervisé."
+        )
+        self.combo_family = fg_m.add_combo(
+            "Famille (GLMNET) :", ["binomial", "multinomial", "gaussian"], "binomial",
+            tooltip="Famille de distribution pour GLMNET."
+        )
+        self.dspin_alpha = fg_m.add_dspin(
+            "Alpha (ElasticNet) :", 0.0, 1.0, 1.0, step=0.05,
+            tooltip="1.0 = LASSO, 0.0 = Ridge, intermédiaire = ElasticNet."
+        )
+        gl_model.addWidget(fg_m)
+        vl.addWidget(g_model)
+
+        # 3. Type de feature
+        g_feat, gl_feat = _group("Features Utilisées")
+        fg_f = FormGrid()
+        self.toggle_abundance = fg_f.add_toggle(
+            "Abondance relative (%)", True,
+            tooltip="Utilise la proportion de cellules dans chaque cluster."
+        )
+        self.toggle_medians = fg_f.add_toggle(
+            "Médiane d'expression", True,
+            tooltip="Utilise les médianes d'intensité par cluster."
+        )
+        self.toggle_covariance = fg_f.add_toggle(
+            "Covariance inter-marqueurs", False,
+            tooltip="Ajoute les covariances entre marqueurs par cluster."
+        )
+        self.edit_markers = fg_f.add_lineedit(
+            "Marqueurs sélectionnés :",
+            "ex: CD3, CD4, CD8, CD19 (vide = tous)",
+        )
+        gl_feat.addWidget(fg_f)
+        vl.addWidget(g_feat)
+
+        # 4. Cross-validation
+        g_cv, gl_cv = _group("Cross-Validation")
+        fg_cv = FormGrid()
+        self.spin_folds = fg_cv.add_spin(
+            "Folds :", 2, 20, 5, tooltip="Nombre de folds pour cross-validation."
+        )
+        self.spin_n_permut = fg_cv.add_spin(
+            "Permutations FDR :", 10, 1000, 100,
+            tooltip="Permutations pour correction FDR par permutation."
+        )
+        self.dspin_fdr = fg_cv.add_dspin(
+            "Seuil FDR :", 0.01, 0.5, 0.05, step=0.01,
+            tooltip="Taux de faux positifs acceptable."
+        )
+        gl_cv.addWidget(fg_cv)
+        vl.addWidget(g_cv)
+
+        vl.addStretch()
+
+
+class WanderlustForm(QWidget):
+    """Paramètres Wanderlust (inférence de trajectoire pseudo-temporelle)."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "WANDERLUST — TRAJECTOIRE PSEUDO-TEMPORELLE")
+
+        g, gl = _group("Configuration Wanderlust")
+        fg = FormGrid()
+        self.spin_k = fg.add_spin(
+            "K voisins :", 5, 200, 15,
+            tooltip="Voisins pour la construction du graphe de trajectoire."
+        )
+        self.spin_n_landmarks = fg.add_spin(
+            "N landmarks :", 10, 5000, 500,
+            tooltip="Nombre de points d'ancrage pour accélérer le calcul."
+        )
+        self.spin_n_jobs = fg.add_spin(
+            "N trajectoires :", 10, 500, 50,
+            tooltip="Nombre de trajectoires aléatoires moyennées."
+        )
+        self.toggle_band = fg.add_toggle(
+            "Bande passante adaptative", True,
+            tooltip="Ajuste le noyau de distance localement."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Cellule de Départ")
+        fg2 = FormGrid()
+        self.combo_start_pop = fg2.add_combo(
+            "Population de départ :", ["Auto (HSC-like)", "CD34+", "Custom"], "Auto (HSC-like)",
+            tooltip="Population définie comme t=0 de la trajectoire."
+        )
+        self.edit_start_marker = fg2.add_lineedit(
+            "Marqueur de départ (Custom) :", "ex: CD34",
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+class WishboneForm(QWidget):
+    """Paramètres Wishbone (bifurcation de trajectoire)."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "WISHBONE — BIFURCATION DE TRAJECTOIRE")
+
+        g, gl = _group("Hyperparamètres Wishbone")
+        fg = FormGrid()
+        self.spin_k = fg.add_spin(
+            "K voisins :", 5, 200, 15,
+            tooltip="Voisins pour graphe de diffusion."
+        )
+        self.spin_components = fg.add_spin(
+            "Composantes diffusion :", 2, 20, 4,
+            tooltip="Composantes de la carte de diffusion."
+        )
+        self.spin_branch = fg.add_spin(
+            "N branches :", 2, 5, 2,
+            tooltip="Nombre de branches de la bifurcation."
+        )
+        self.toggle_normalize = fg.add_toggle(
+            "Normaliser composantes", True,
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Cellule de Départ")
+        fg2 = FormGrid()
+        self.combo_start = fg2.add_combo(
+            "Population t=0 :", ["Auto", "CD34+ HSC", "Custom"], "Auto",
+        )
+        self.edit_start_custom = fg2.add_lineedit(
+            "Marqueur Custom :", "ex: CD34",
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+class HarmonyForm(QWidget):
+    """
+    Paramètres Harmony (correction de batch).
+    VERROUILLÉ: correction sur canal SSC uniquement.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "HARMONY — CORRECTION DE BATCH")
+
+        # Avertissement de verrouillage SSC
+        warn = QLabel(
+            "⚠  Correction verrouillée sur le canal SSC uniquement.\n"
+            "   Aucune autre correction inter-canal n'est supportée en mode RUO."
+        )
+        warn.setStyleSheet(
+            "background: #1A1400; color: #FFE032; border: 1px solid #4A3800;"
+            " padding: 10px; font-size: 11px;"
+        )
+        warn.setWordWrap(True)
+        vl.addWidget(warn)
+
+        g, gl = _group("Paramètres Harmony (SSC)")
+        fg = FormGrid()
+
+        # Canal SSC — fixé, non éditable
+        ssc_lbl = QLabel("Canal corrigé :")
+        ssc_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        ssc_val = QLabel("SSC-A  [verrouillé]")
+        ssc_val.setStyleSheet("color: #FFE032; font-weight: 600;")
+        fg.grid().addWidget(ssc_lbl, fg._row, 0)
+        fg.grid().addWidget(ssc_val, fg._row, 1)
+        fg._row += 1
+
+        self.spin_theta = fg.add_dspin(
+            "Theta (diversité) :", 0.0, 10.0, 2.0, step=0.5,
+            tooltip="Contrôle la force de correction batch. 0 = pas de correction."
+        )
+        self.spin_lambda_ = fg.add_dspin(
+            "Lambda (régularisation) :", 0.0, 100.0, 1.0, step=0.5,
+            tooltip="Régularisation Ridge sur les termes batch."
+        )
+        self.spin_sigma = fg.add_dspin(
+            "Sigma (largeur KDE) :", 0.01, 5.0, 0.1, step=0.05,
+            tooltip="Largeur du noyau pour l'estimation de densité dans l'espace harmonique."
+        )
+        self.spin_max_iter = fg.add_spin(
+            "Itérations max :", 1, 100, 10,
+            tooltip="Itérations de l'algorithme EM Harmony."
+        )
+        self.toggle_correct_all = fg.add_toggle(
+            "Corriger l'embedding aussi", False,
+            tooltip="Applique Harmony également aux embeddings dim-red."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Variable Batch")
+        fg2 = FormGrid()
+        self.combo_batch_var = fg2.add_combo(
+            "Variable batch :", ["Sample", "Operator", "Date", "Custom"], "Sample",
+            tooltip="Colonne utilisée pour identifier les batches."
+        )
+        self.edit_batch_custom = fg2.add_lineedit(
+            "Nom de la colonne (Custom) :", "ex: batch_id",
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        vl.addStretch()
+
+
+# ── Export Form ───────────────────────────────────────────────────────────────
+
+class ExportForm(QWidget):
+    """Formulaire de configuration d'export."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        vl = QVBoxLayout(self)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(12)
+
+        _section(vl, "CONFIGURATION D'EXPORT")
+
+        g, gl = _group("Répertoire de Sortie")
+        fg = FormGrid()
+        self.edit_outdir = fg.add_lineedit(
+            "Dossier de sortie :", "Cliquer pour choisir…",
+            tooltip="Répertoire où seront écrits tous les fichiers exportés."
+        )
+        gl.addWidget(fg)
+        vl.addWidget(g)
+
+        g2, gl2 = _group("Options FCS")
+        fg2 = FormGrid()
+        self.toggle_annotate_fcs = fg2.add_toggle(
+            "Annoter FCS avec labels de clusters", True,
+        )
+        self.combo_fcs_version = fg2.add_combo(
+            "Version FCS :", ["3.1", "3.0"], "3.1",
+        )
+        gl2.addWidget(fg2)
+        vl.addWidget(g2)
+
+        g3, gl3 = _group("Rapport")
+        fg3 = FormGrid()
+        self.combo_report = fg3.add_combo(
+            "Type de rapport :", ["PDF", "HTML", "Aucun"], "PDF",
+        )
+        self.toggle_include_plots = fg3.add_toggle("Inclure figures", True)
+        self.toggle_include_stats = fg3.add_toggle("Inclure statistiques", True)
+        gl3.addWidget(fg3)
+        vl.addWidget(g3)
+
+        vl.addStretch()
+
+
+# Alias pour le wizard
+ExportWizardTab = ExportForm

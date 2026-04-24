@@ -99,6 +99,23 @@ def _resolve_batch_label(experiment: Experiment, sample: Any, batch_key: str) ->
     return sid
 
 
+def _marker_key(name: str) -> str:
+    """Normalise un nom de canal pour les comparaisons techniques."""
+    key = str(name).upper().strip().replace(" ", "")
+    for suffix in ("-A", "-H", "-W", "_A", "_H", "_W"):
+        if key.endswith(suffix):
+            key = key[: -len(suffix)]
+            break
+    return key
+
+
+def _ssc_alignment_indices(feature_names: Optional[Sequence[str]]) -> List[int]:
+    """Retourne les indices des canaux SSC uniquement."""
+    if feature_names is None:
+        return []
+    return [i for i, name in enumerate(feature_names) if _marker_key(name) == "SSC"]
+
+
 def build_cohort_matrix(
     experiment: Experiment,
     channels: Optional[List[str]] = None,
@@ -161,6 +178,7 @@ def run_harmony(
     X: np.ndarray,
     batch_labels: np.ndarray,
     params: HarmonyParams,
+    feature_names: Optional[Sequence[str]] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Lance Harmony avec fallback propre si dépendance absente ou échec runtime.
@@ -190,11 +208,25 @@ def run_harmony(
             "n_batches": int(unique_batches.size),
         }
 
+    align_indices = _ssc_alignment_indices(feature_names)
+    if not align_indices:
+        logger.warning("[Harmony] aucun canal SSC détecté; retour de la matrice brute.")
+        return X.copy(), {
+            "backend": "identity",
+            "reason": "ssc_missing",
+            "n_batches": int(unique_batches.size),
+        }
+
+    if len(align_indices) == X.shape[1]:
+        X_to_correct = X
+    else:
+        X_to_correct = X[:, align_indices]
+
     meta = pd.DataFrame({params.batch_key: batch_labels.astype(str)})
 
     try:
         ho = harmonypy.run_harmony(
-            X,
+            X_to_correct,
             meta,
             [params.batch_key],
             theta=params.theta,
@@ -208,17 +240,26 @@ def run_harmony(
         )
         raw = np.asarray(ho.Z_corr)
 
-        if raw.shape == X.shape:
+        if raw.shape == X_to_correct.shape:
             X_corr = raw
-        elif raw.T.shape == X.shape:
+        elif raw.T.shape == X_to_correct.shape:
             X_corr = raw.T
         else:
-            raise ValueError(f"Harmony output shape {raw.shape} incompatible with input {X.shape}.")
+            raise ValueError(
+                f"Harmony output shape {raw.shape} incompatible with input {X_to_correct.shape}."
+            )
 
-        return X_corr.astype(np.float32), {
+        if len(align_indices) == X.shape[1]:
+            corrected = X_corr.astype(np.float32)
+        else:
+            corrected = X.copy().astype(np.float32)
+            corrected[:, align_indices] = X_corr.astype(np.float32)
+
+        return corrected, {
             "backend": "harmonypy",
             "n_batches": int(unique_batches.size),
-            "shape": tuple(int(v) for v in X_corr.shape),
+            "shape": tuple(int(v) for v in corrected.shape),
+            "aligned_channels": [feature_names[i] for i in align_indices] if feature_names else [],
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("[Harmony] failed (%s); returning uncorrected matrix.", exc)

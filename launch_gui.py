@@ -70,8 +70,8 @@ def _install_crash_guard() -> None:
     une boîte de dialogue Qt au lieu d'une mort silencieuse en mode frozen console=False.
     Un fichier crash.log est écrit à côté du .exe pour diagnostic post-mortem.
     """
-    import traceback as _tb
     import threading as _threading
+    import traceback as _tb
 
     def _write_crash_log(msg: str) -> None:
         try:
@@ -84,6 +84,7 @@ def _install_crash_guard() -> None:
     def _show_crash_dialog(title: str, exc_type, exc_value, msg: str) -> None:
         try:
             from PyQt5.QtWidgets import QApplication, QMessageBox
+
             app = QApplication.instance()
             if app is not None:
                 box = QMessageBox()
@@ -127,14 +128,43 @@ if getattr(sys, "frozen", False):
 else:
     _BASE_DIR = Path(__file__).resolve().parent
 
-# Rendre le package flowsom_pipeline_pro importable (mode frozen ou dev)
+# Rendre les packages projet importables (mode frozen ou dev)
+_SRC_DIR = _BASE_DIR / "src"
 if str(_BASE_DIR) not in sys.path:
     sys.path.insert(0, str(_BASE_DIR))
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
-# Idem pour le dossier parent (mode dev sans pip install)
-_PARENT = _BASE_DIR.parent
-if str(_PARENT) not in sys.path:
-    sys.path.insert(0, str(_PARENT))
+
+def _install_legacy_import_aliases(base_dir: Path) -> None:
+    """
+    Assure la compatibilité des imports historiques `flowsom_pipeline_pro.*`
+    en les redirigeant vers ce dépôt PRISMA Research.
+    """
+    import types
+
+    if "flowsom_pipeline_pro" not in sys.modules:
+        pkg = types.ModuleType("flowsom_pipeline_pro")
+        pkg.__path__ = [str(base_dir)]
+        sys.modules["flowsom_pipeline_pro"] = pkg
+
+    src_dir = base_dir / "src"
+    if src_dir.exists() and "flowsom_pipeline_pro.src" not in sys.modules:
+        src_pkg = types.ModuleType("flowsom_pipeline_pro.src")
+        src_pkg.__path__ = [str(src_dir)]
+        sys.modules["flowsom_pipeline_pro.src"] = src_pkg
+
+    config_dir = base_dir / "config"
+    if config_dir.exists() and "flowsom_pipeline_pro.config" not in sys.modules:
+        cfg_pkg = types.ModuleType("flowsom_pipeline_pro.config")
+        cfg_pkg.__path__ = [str(config_dir)]
+        sys.modules["flowsom_pipeline_pro.config"] = cfg_pkg
+
+
+_install_legacy_import_aliases(_BASE_DIR)
+
+# NOTE: dossier parent (Perplexity/) volontairement exclu — évite de charger
+# un autre checkout legacy et sa chaîne d'imports lourds.
 
 # ── Suppression des logs verbeux de kaleido (Chromium/CDP) ─────────────────────
 # kaleido utilise le logger root Python — on le filtre à WARNING pour ne garder
@@ -151,10 +181,34 @@ for _noisy in (
 ):
     _logging.getLogger(_noisy).setLevel(_logging.WARNING)
 
+# ── Debug threading issues — set env var PRISMA_DEBUG=1 to enable ──────────────
+if os.environ.get("PRISMA_DEBUG"):
+    _logging.basicConfig(
+        level=_logging.DEBUG,
+        format="[%(asctime)s] %(levelname)-8s %(name)s — %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    for _dbg_logger in ("prisma.workers.debug", "prisma.wizard"):
+        _logging.getLogger(_dbg_logger).setLevel(_logging.DEBUG)
+else:
+    # En mode normal, activer quand même DEBUG pour ces deux loggers
+    # pour capturer les erreurs QBasicTimer sans polluer le reste.
+    _logging.basicConfig(
+        level=_logging.WARNING,
+        format="[%(asctime)s] %(levelname)-8s %(name)s — %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    for _dbg_logger in ("prisma.workers.debug", "prisma.wizard"):
+        _logging.getLogger(_dbg_logger).setLevel(_logging.DEBUG)
+
 # Important: must run before importing Qt modules / creating QApplication.
 _enable_windows_crisp_rendering()
 
-from flowsom_pipeline_pro.gui.main_window import main
+# Wizard v3.0 — remplace main_window pour le mode RUO interactif
+try:
+    from gui.wizard_main import main
+except ImportError:
+    from gui.main_window import main  # fallback legacy
 
 if __name__ == "__main__":
     main()

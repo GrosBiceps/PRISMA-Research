@@ -268,18 +268,12 @@ def select_markers_for_clustering(
     markers = list(var_names)
 
     if getattr(config.markers, "exclude_scatter", True):
-        markers = [
-            m for m in markers if not any(p in m.upper() for p in SCATTER_PATTERNS)
-        ]
+        markers = [m for m in markers if not any(p in m.upper() for p in SCATTER_PATTERNS)]
 
     # Cas 3: blacklist (correspondance par sous-chaîne, comme le monolithe)
     blacklist = getattr(config.markers, "exclude_additional", [])
     if blacklist:
-        markers = [
-            m
-            for m in markers
-            if not any(excl.upper() in m.upper() for excl in blacklist)
-        ]
+        markers = [m for m in markers if not any(excl.upper() in m.upper() for excl in blacklist)]
 
     # Validation finale
     check_no_fsc_ssc_in_analysis_markers(markers)
@@ -461,9 +455,7 @@ def stack_raw_markers(
 def run_clustering(
     samples: List[FlowSample],
     config: PipelineConfig,
-) -> Tuple[
-    np.ndarray, np.ndarray, FlowSOMClusterer, List[str], np.ndarray, pd.DataFrame, List
-]:
+) -> Tuple[np.ndarray, np.ndarray, FlowSOMClusterer, List[str], np.ndarray, pd.DataFrame, List]:
     """
     Exécute le clustering FlowSOM complet sur la liste d'échantillons.
 
@@ -492,9 +484,7 @@ def run_clustering(
             len(samples[0].var_names),
         )
     selected_markers = select_markers_for_clustering(_common_vars, config)
-    _logger.info(
-        "Marqueurs pour FlowSOM (%d): %s", len(selected_markers), selected_markers
-    )
+    _logger.info("Marqueurs pour FlowSOM (%d): %s", len(selected_markers), selected_markers)
 
     # ── Déséquilibre Maîtrisé (Stratified Downsampling) ──────────────────────
     # Rééquilibre le pool sain/patho AVANT le SOM pour rendre les clusters rares
@@ -523,9 +513,7 @@ def run_clustering(
             _logger.info(
                 "nbm_ids non spécifiés → auto-détection: %d fichiers NBM (conditions: %s)",
                 len(nbm_ids),
-                sorted(
-                    {s.condition for s in samples if s.condition in _HEALTHY_CONDITIONS}
-                ),
+                sorted({s.condition for s in samples if s.condition in _HEALTHY_CONDITIONS}),
             )
 
         # Ajouter un index local par fichier pour pouvoir retrouver les lignes
@@ -562,24 +550,16 @@ def run_clustering(
         _marker_cols = [c for c in df_balanced.columns if c not in _meta_cols]
         _balanced_samples: List[_FlowSample] = []
         for _fname, _grp in df_balanced.groupby("file_origin", sort=False):
-            _cond = (
-                _grp["condition"].iloc[0] if "condition" in _grp.columns else "Unknown"
-            )
+            _cond = _grp["condition"].iloc[0] if "condition" in _grp.columns else "Unknown"
             # Sample original pour récupérer le raw_data si disponible
             _orig = next((s for s in samples if s.name == _fname), None)
             _df_markers = _grp[_marker_cols].reset_index(drop=True)
 
             # Propager raw_data en sélectionnant les lignes correspondantes
             _raw_data_balanced: Optional[pd.DataFrame] = None
-            if (
-                _orig is not None
-                and _orig.raw_data is not None
-                and _IDX_COL in _grp.columns
-            ):
+            if _orig is not None and _orig.raw_data is not None and _IDX_COL in _grp.columns:
                 _cell_indices = _grp[_IDX_COL].values.astype(int)
-                _raw_data_balanced = _orig.raw_data.iloc[_cell_indices].reset_index(
-                    drop=True
-                )
+                _raw_data_balanced = _orig.raw_data.iloc[_cell_indices].reset_index(drop=True)
 
             _s = _FlowSample(
                 name=str(_fname),
@@ -617,16 +597,12 @@ def run_clustering(
             min_clusters=getattr(config.auto_clustering, "min_clusters", 5),
             max_clusters=getattr(config.auto_clustering, "max_clusters", 35),
             n_bootstrap=getattr(config.auto_clustering, "n_bootstrap", 10),
-            sample_size_bootstrap=getattr(
-                config.auto_clustering, "sample_size_bootstrap", 20_000
-            ),
+            sample_size_bootstrap=getattr(config.auto_clustering, "sample_size_bootstrap", 20_000),
             min_stability_threshold=getattr(
                 config.auto_clustering, "min_stability_threshold", 0.75
             ),
             weight_stability=getattr(config.auto_clustering, "weight_stability", 0.65),
-            weight_silhouette=getattr(
-                config.auto_clustering, "weight_silhouette", 0.35
-            ),
+            weight_silhouette=getattr(config.auto_clustering, "weight_silhouette", 0.35),
             xdim=flowsom_cfg.xdim,
             ydim=flowsom_cfg.ydim,
             seed=config.flowsom.seed,
@@ -675,17 +651,13 @@ def run_clustering(
             harmony_max_iter = int(getattr(hp, "max_iter", 10)) if hp else 10
             harmony_max_iter_km = int(getattr(hp, "max_iter_kmeans", 10)) if hp else 10
             harmony_verbose = bool(getattr(hp, "verbose", False)) if hp else False
-            markers_to_align_raw = (
-                list(getattr(hp, "markers_to_align", []) or []) if hp else []
-            )
+            markers_to_align_raw = list(getattr(hp, "markers_to_align", []) or []) if hp else []
             # nclust None = auto (N/30) — explicitement None si la config le dit
             if harmony_nclust is not None:
                 harmony_nclust = int(harmony_nclust)
 
             # ── Harmony partiel (biology-first) ────────────────────────────
-            # Si markers_to_align est renseigné, on corrige UNIQUEMENT ces
-            # colonnes techniques (ex: FSC/SSC/CD45) et on préserve les autres
-            # marqueurs biologiques tumoraux (CD34/CD117/...) inchangés.
+            # On corrige uniquement SSC pour préserver les marqueurs biologiques.
             def _marker_key(name: str) -> str:
                 k = str(name).upper().strip().replace(" ", "")
                 for suffix in ("-A", "-H", "-W", "_A", "_H", "_W"):
@@ -695,40 +667,14 @@ def run_clustering(
                 return k
 
             selected_keys = [_marker_key(m) for m in selected_markers]
-            align_indices = list(range(X.shape[1]))
-            align_markers = list(selected_markers)
+            align_indices = [i for i, m_key in enumerate(selected_keys) if m_key == "SSC"]
+            align_markers = [selected_markers[i] for i in align_indices]
 
-            if markers_to_align_raw:
-                requested = [
-                    str(m).strip() for m in markers_to_align_raw if str(m).strip()
-                ]
-                requested_keys = {_marker_key(m) for m in requested}
-                align_indices = [
-                    i
-                    for i, m_key in enumerate(selected_keys)
-                    if m_key in requested_keys
-                ]
-                align_markers = [selected_markers[i] for i in align_indices]
-
-                missing = [
-                    m for m in requested if _marker_key(m) not in set(selected_keys)
-                ]
-                if missing:
-                    # Les canaux scatter (FSC-A, SSC-A) sont normalement exclus
-                    # du clustering — c'est attendu, pas une erreur.
-                    _logger.info(
-                        "Harmony partiel: marqueurs demandés non présents dans "
-                        "selected_markers (exclus du clustering, ex: scatter): %s",
-                        missing,
-                    )
-
-                if not align_indices:
-                    _logger.info(
-                        "Harmony partiel: aucun marqueur demandé présent dans "
-                        "selected_markers — Harmony désactivé pour ce run "
-                        "(marqueurs scatter absents du clustering, comportement normal)."
-                    )
-                    align_indices = []
+            if not align_indices:
+                _logger.info(
+                    "Harmony SSC: aucun canal SSC détecté dans selected_markers — "
+                    "correction désactivée pour ce run."
+                )
 
             if not align_indices:
                 ho = None
@@ -777,9 +723,7 @@ def run_clustering(
                 except RuntimeError as _gpu_err:
                     _msg = str(_gpu_err).lower()
                     if "cuda" in _msg or "out of memory" in _msg or "device" in _msg:
-                        _logger.warning(
-                            "Harmony GPU erreur (%s) — reprise sur CPU.", _gpu_err
-                        )
+                        _logger.warning("Harmony GPU erreur (%s) — reprise sur CPU.", _gpu_err)
                         try:
                             ho = _run_harmony_with_fallback("cpu")
                         except Exception as _cpu_err:
@@ -795,9 +739,7 @@ def run_clustering(
                         )
                         ho = None
                 except Exception as _exc:
-                    _logger.warning(
-                        "Harmony a échoué (%s) — données brutes conservées.", _exc
-                    )
+                    _logger.warning("Harmony a échoué (%s) — données brutes conservées.", _exc)
                     ho = None
 
             if ho is not None:
@@ -848,12 +790,8 @@ def run_clustering(
         n_clusters,
     )
     clusterer.fit(X, selected_markers)
-    metaclustering = getattr(
-        clusterer, "metacluster_assignments_", np.zeros(X.shape[0], dtype=int)
-    )
-    clustering = getattr(
-        clusterer, "node_assignments_", np.zeros(X.shape[0], dtype=int)
-    )
+    metaclustering = getattr(clusterer, "metacluster_assignments_", np.zeros(X.shape[0], dtype=int))
+    clustering = getattr(clusterer, "node_assignments_", np.zeros(X.shape[0], dtype=int))
 
     return metaclustering, clustering, clusterer, selected_markers, X, obs, samples
 

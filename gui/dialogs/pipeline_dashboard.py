@@ -47,9 +47,9 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSize, QUrl, QMimeData, QTimer
 from PyQt5.QtGui import QFont, QColor, QDragEnterEvent, QDropEvent, QIcon
 
-from flowsom_pipeline_pro.gui.widgets.toggle_switch import ToggleSwitch
-from flowsom_pipeline_pro.gui.widgets.settings_card import SettingsCard
-from flowsom_pipeline_pro.gui.widgets.log_console import LogConsole
+from gui.widgets.toggle_switch import ToggleSwitch
+from gui.widgets.settings_card import SettingsCard
+from gui.widgets.log_console import LogConsole
 
 try:
     import qtawesome as qta
@@ -760,7 +760,7 @@ class DataImportPanel(QFrame):
     def _scan_files(self) -> None:
         """Tente de lire les mÃ©tadonnÃ©es FCS (cellules, marqueurs)."""
         try:
-            from flowsom_pipeline_pro.src.io.fcs_reader import read_fcs_metadata
+            from io.fcs_reader import read_fcs_metadata
 
             for entry in self._files:
                 try:
@@ -1592,7 +1592,7 @@ def make_expand_button(parent_window) -> QPushButton:
     Au clic, ouvre PipelineDashboard en tant que fenÃªtre modale.
 
     Usage dans main_window.py :
-        from flowsom_pipeline_pro.gui.dialogs.pipeline_dashboard import make_expand_button
+        from gui.dialogs.pipeline_dashboard import make_expand_button
         btn = make_expand_button(self)
         some_layout.addWidget(btn)
     """

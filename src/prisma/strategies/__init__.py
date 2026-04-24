@@ -3,6 +3,7 @@
 from prisma.strategies import (  # noqa: F401
     umap_strategy,
     tsne_strategy,
+    phate_strategy,
     flowsom_strategy,
     spectral_strategy,
 )

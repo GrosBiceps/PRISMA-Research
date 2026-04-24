@@ -138,6 +138,7 @@ class HarmonyStrategy:
                 max_iter_kmeans=p.max_iter_kmeans,
                 random_state=p.random_state,
             ),
+            feature_names=cohort.channels,
         )
 
         if p.store_corrected_channels:

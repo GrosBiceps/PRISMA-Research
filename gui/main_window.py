@@ -29,8 +29,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
-    from flowsom_pipeline_pro.src.models.pipeline_result import PipelineResult
+    from config.pipeline_config import PipelineConfig
+    from src.models.pipeline_result import PipelineResult
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -82,8 +82,8 @@ import matplotlib
 
 matplotlib.use("Qt5Agg")
 
-from flowsom_pipeline_pro.gui.styles import STYLESHEET, COLORS
-from flowsom_pipeline_pro.gui.prisma_icons import get_prisma_icon
+from gui.styles import STYLESHEET, COLORS
+from gui.prisma_icons import get_prisma_icon
 
 
 def _asset_path(filename: str) -> Path:
@@ -108,12 +108,12 @@ def _register_embedded_fonts() -> None:
         QFontDatabase.addApplicationFont(str(font_path))
 
 
-from flowsom_pipeline_pro.gui.workers import PipelineWorker, SpiderPlotWorker, FcsLoaderWorker
-from flowsom_pipeline_pro.gui.tabs.home_tab import HomeTab
-from flowsom_pipeline_pro.gui.widgets.log_console import LogConsole
-from flowsom_pipeline_pro.gui.widgets.toggle_switch import ToggleSwitch
-from flowsom_pipeline_pro.gui.widgets.settings_card import SettingsCard
-from flowsom_pipeline_pro.gui.widgets.parameter_tabs import ParameterDashboard
+from gui.workers import PipelineWorker, SpiderPlotWorker, FcsLoaderWorker
+from gui.tabs.home_tab import HomeTab
+from gui.widgets.log_console import LogConsole
+from gui.widgets.toggle_switch import ToggleSwitch
+from gui.widgets.settings_card import SettingsCard
+from gui.widgets.parameter_tabs import ParameterDashboard
 
 # qtawesome — icônes vectorielles Font Awesome 5
 try:
@@ -491,9 +491,9 @@ class DropZoneLabel(QLabel):
 _STEPS = [
     ("1", "Accueil", "Démarrage"),
     ("2", "Import", "Dossiers FCS"),
-    ("3", "Paramétrage", "SOM · MRD · Gating"),
+    ("3", "Paramétrage", "SOM · Gating · Clustering"),
     ("4", "Exécution", "Lancement & logs"),
-    ("5", "Résultats", "MRD · Visualisation"),
+    ("5", "Résultats", "Visualisation · Populations"),
 ]
 
 _STEP_ICONS = [
@@ -709,11 +709,15 @@ class FlowSomAnalyzerPro(QMainWindow):
         self._gate_plot_paths: Dict[str, str] = {}
         self._combined_html_path: Optional[str] = None
         self.current_fcs_adata: Optional[Any] = None
-        self._fcs_adata_raw: Optional[Any] = None       # copie brute pour le toggle viewer FCS
-        self._fcs_viewer_mode: str = "raw"             # "raw" | "logicle" | "log"
-        self._full_fcs_adata: Optional[Any] = None           # FCS complet (toutes cellules) pour scatter clusters
-        self._full_fcs_adata_raw: Optional[Any] = None       # copie brute pour le toggle scatter clusters
-        self._clusters_viewer_mode: str = "raw"              # "raw" | "logicle"
+        self._fcs_adata_raw: Optional[Any] = None  # copie brute pour le toggle viewer FCS
+        self._fcs_viewer_mode: str = "raw"  # "raw" | "logicle" | "log"
+        self._full_fcs_adata: Optional[Any] = (
+            None  # FCS complet (toutes cellules) pour scatter clusters
+        )
+        self._full_fcs_adata_raw: Optional[Any] = (
+            None  # copie brute pour le toggle scatter clusters
+        )
+        self._clusters_viewer_mode: str = "raw"  # "raw" | "logicle"
         self._full_fcs_loader: Optional[Any] = None  # worker de chargement FCS complet
         self._patho_fcs_path: Optional[str] = None  # FCS patho auto-chargé après pipeline
         self._pending_prescreening: Optional[Dict] = None
@@ -1144,7 +1148,8 @@ class FlowSomAnalyzerPro(QMainWindow):
         # _config peut être None si _init_ui() s'exécute avant _load_default_config().
         # On crée une config par défaut temporaire qui sera remplacée par load() plus tard.
         if self._config is None:
-            from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig as _PC
+            from config.pipeline_config import PipelineConfig as _PC
+
             self._config = _PC()
         self._param_dashboard = ParameterDashboard(self._config)
         self._param_dashboard.connect_live()
@@ -1580,7 +1585,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         return group
 
     def _build_mrd_group(self) -> QGroupBox:
-        group = QGroupBox("Paramètres MRD")
+        group = QGroupBox("Paramètres population")
         grid = QGridLayout(group)
         grid.setSpacing(8)
 
@@ -1880,7 +1885,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         self.tabs.tabBar().setElideMode(Qt.ElideNone)
         self.tabs.tabBar().setExpanding(False)
         self.tabs.setIconSize(QSize(16, 16))
-        self._build_home_tab()  # 0 — Accueil MRD
+        self._build_home_tab()  # 0 — Résumé de recherche
         self._build_viz_tab()  # 1 — Visualisation
         self._build_pregate_tab()  # 2 — Représentations
         self._build_clusters_tab()  # 3 — Clusters
@@ -1901,7 +1906,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         self._home_tab.expert_focus_curation_applied.connect(self._on_expert_focus_curation_applied)
         self._home_tab.verification_commit_requested.connect(self._on_verification_commit_requested)
         _ico_home = _icon("prisma.dot-plot", "#39FF8A", 16)
-        self.tabs.addTab(self._home_tab, _ico_home or QIcon(), "ACCUEIL MRD")
+        self.tabs.addTab(self._home_tab, _ico_home or QIcon(), "ACCUEIL")
 
     def _build_viz_tab(self) -> None:
         tab = QWidget()
@@ -2056,13 +2061,13 @@ class FlowSomAnalyzerPro(QMainWindow):
 
         # ── Titre de l'onglet ────────────────────────────────────────────
         hdr = QHBoxLayout()
-        lbl_title = QLabel("Expert Focus View")
+        lbl_title = QLabel("Population Review")
         lbl_title.setObjectName("sectionLabel")
         hdr.addWidget(lbl_title)
         hdr.addStretch()
 
-        # Sélecteur méthode MRD pour pré-sélection automatique des clusters
-        lbl_mrd_method = QLabel("Sélection MRD :")
+        # Sélecteur de méthode pour la pré-sélection automatique des clusters
+        lbl_mrd_method = QLabel("Sélection population :")
         lbl_mrd_method.setStyleSheet(
             "color: rgba(238,242,247,0.55); font-size: 8.5pt; background: transparent;"
         )
@@ -2072,7 +2077,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         self.combo_cluster_mrd_method.setFixedHeight(28)
         self.combo_cluster_mrd_method.setMinimumWidth(130)
         self.combo_cluster_mrd_method.setToolTip(
-            "Pré-coche les clusters sélectionnés par la méthode MRD choisie.\n"
+            "Pré-coche les clusters sélectionnés par la méthode choisie.\n"
             "'Tout décocher' laisse tous les clusters sans approbation."
         )
         self.combo_cluster_mrd_method.currentIndexChanged.connect(
@@ -2087,7 +2092,7 @@ class FlowSomAnalyzerPro(QMainWindow):
             "padding: 3px 8px; font-size: 8pt; font-weight: 700;"
         )
         self._lbl_cluster_sync_badge.setToolTip(
-            "Validation nœuds MRD et onglet Clusters synchronisés en direct"
+            "Synchronisation en direct entre les sélections et l'onglet Clusters"
         )
         hdr.addWidget(self._lbl_cluster_sync_badge)
 
@@ -2253,7 +2258,9 @@ class FlowSomAnalyzerPro(QMainWindow):
         clusters_mode_layout.setSpacing(6)
 
         _lbl_cm = QLabel("Données :")
-        _lbl_cm.setStyleSheet("color: rgba(238,242,247,0.55); font-family: Consolas; font-size: 8pt;")
+        _lbl_cm.setStyleSheet(
+            "color: rgba(238,242,247,0.55); font-family: Consolas; font-size: 8pt;"
+        )
         clusters_mode_layout.addWidget(_lbl_cm)
 
         _cm_style_active = (
@@ -2273,14 +2280,18 @@ class FlowSomAnalyzerPro(QMainWindow):
         self.btn_clusters_raw = QPushButton("Brut (FCS)")
         self.btn_clusters_raw.setFixedHeight(20)
         self.btn_clusters_raw.setStyleSheet(_cm_style_active)
-        self.btn_clusters_raw.setToolTip("Afficher les intensités brutes telles que lues dans le FCS")
+        self.btn_clusters_raw.setToolTip(
+            "Afficher les intensités brutes telles que lues dans le FCS"
+        )
         self.btn_clusters_raw.clicked.connect(lambda: self._set_clusters_viewer_mode("raw"))
         clusters_mode_layout.addWidget(self.btn_clusters_raw)
 
         self.btn_clusters_logicle = QPushButton("Logicle")
         self.btn_clusters_logicle.setFixedHeight(20)
         self.btn_clusters_logicle.setStyleSheet(_cm_style_inactive)
-        self.btn_clusters_logicle.setToolTip("Appliquer une transformation logicle à la volée (depuis le FCS brut)")
+        self.btn_clusters_logicle.setToolTip(
+            "Appliquer une transformation logicle à la volée (depuis le FCS brut)"
+        )
         self.btn_clusters_logicle.clicked.connect(lambda: self._set_clusters_viewer_mode("logicle"))
         clusters_mode_layout.addWidget(self.btn_clusters_logicle)
 
@@ -2292,12 +2303,15 @@ class FlowSomAnalyzerPro(QMainWindow):
         clusters_mode_layout.addWidget(_sep)
 
         _lbl_dot = QLabel("Points :")
-        _lbl_dot.setStyleSheet("color: rgba(238,242,247,0.55); font-family: Consolas; font-size: 8pt;")
+        _lbl_dot.setStyleSheet(
+            "color: rgba(238,242,247,0.55); font-family: Consolas; font-size: 8pt;"
+        )
         clusters_mode_layout.addWidget(_lbl_dot)
 
         from PyQt5.QtWidgets import QSlider
         from PyQt5.QtCore import Qt as _Qt
-        self._cluster_point_size: int = 6          # valeur par défaut (matplotlib s=)
+
+        self._cluster_point_size: int = 6  # valeur par défaut (matplotlib s=)
         self.slider_cluster_pts = QSlider(_Qt.Horizontal)
         self.slider_cluster_pts.setMinimum(1)
         self.slider_cluster_pts.setMaximum(80)
@@ -2577,7 +2591,9 @@ class FlowSomAnalyzerPro(QMainWindow):
         mode_layout.setSpacing(8)
 
         _lbl_mode = QLabel("Données :")
-        _lbl_mode.setStyleSheet("color: rgba(238,242,247,0.55); font-family: Consolas; font-size: 8pt;")
+        _lbl_mode.setStyleSheet(
+            "color: rgba(238,242,247,0.55); font-family: Consolas; font-size: 8pt;"
+        )
         mode_layout.addWidget(_lbl_mode)
 
         _style_active = (
@@ -2595,19 +2611,25 @@ class FlowSomAnalyzerPro(QMainWindow):
         self.btn_fcs_raw = QPushButton("Brut (FCS)")
         self.btn_fcs_raw.setFixedHeight(22)
         self.btn_fcs_raw.setStyleSheet(_style_active)
-        self.btn_fcs_raw.setToolTip("Afficher les données brutes telles que lues dans le fichier FCS")
+        self.btn_fcs_raw.setToolTip(
+            "Afficher les données brutes telles que lues dans le fichier FCS"
+        )
         mode_layout.addWidget(self.btn_fcs_raw)
 
         self.btn_fcs_logicle = QPushButton("Logicle")
         self.btn_fcs_logicle.setFixedHeight(22)
         self.btn_fcs_logicle.setStyleSheet(_style_inactive)
-        self.btn_fcs_logicle.setToolTip("Appliquer une transformation logicle à la volée (tous les canaux)")
+        self.btn_fcs_logicle.setToolTip(
+            "Appliquer une transformation logicle à la volée (tous les canaux)"
+        )
         mode_layout.addWidget(self.btn_fcs_logicle)
 
         self.btn_fcs_log = QPushButton("Log₁₀")
         self.btn_fcs_log.setFixedHeight(22)
         self.btn_fcs_log.setStyleSheet(_style_inactive)
-        self.btn_fcs_log.setToolTip("Appliquer log10(x+1) à la volée sur tous les canaux (vue classique cytométrie)")
+        self.btn_fcs_log.setToolTip(
+            "Appliquer log10(x+1) à la volée sur tous les canaux (vue classique cytométrie)"
+        )
         mode_layout.addWidget(self.btn_fcs_log)
 
         self._fcs_mode_style_active = _style_active
@@ -2640,7 +2662,7 @@ class FlowSomAnalyzerPro(QMainWindow):
 
     def _load_default_config(self) -> None:
         try:
-            from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
+            from config.pipeline_config import PipelineConfig
 
             if _DEFAULT_CONFIG_PATH.exists():
                 self._config = PipelineConfig.from_yaml(str(_DEFAULT_CONFIG_PATH))
@@ -3701,7 +3723,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         self._log("═══════════════════════════════════════════════")
 
         if self._config.batch.enabled:
-            from flowsom_pipeline_pro.gui.workers import BatchWorker
+            from gui.workers import BatchWorker
 
             self._worker = BatchWorker(self._config, parent=self)
             self._worker.log_message.connect(self._on_log_message)
@@ -3818,6 +3840,7 @@ class FlowSomAnalyzerPro(QMainWindow):
                     pass
             # Sauvegarder une copie brute pour le toggle
             import copy as _copy
+
             self._full_fcs_adata_raw = _copy.copy(adata)
             self._full_fcs_adata_raw.X = adata.X.copy()
             # Réinitialiser le mode sur "Brut" à chaque nouveau chargement
@@ -4498,7 +4521,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         self.star_canvas.display_figure(fig)
 
     # ------------------------------------------------------------------
-    # Expert Focus View — helpers
+    # Population Review — helpers
     # ------------------------------------------------------------------
 
     def _get_selected_cluster_id(self) -> Optional[Any]:
@@ -4557,6 +4580,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         # _result_data_adata_raw : intensités brutes pré-transformation depuis result.raw_data
         try:
             import anndata as _ad
+
             # Logicle — directement depuis result.data
             _X_log = df[marker_cols].values.astype(np.float32)
             _adata_log = _ad.AnnData(_X_log)
@@ -4720,9 +4744,15 @@ class FlowSomAnalyzerPro(QMainWindow):
             # Éviter les couleurs trop claires (proches du blanc) qui se
             # confondent avec le fond blanc des points hors-cluster.
             _FALLBACK_COLORS = [
-                (0.122, 0.467, 0.706), (1.0, 0.498, 0.055), (0.173, 0.627, 0.173),
-                (0.839, 0.153, 0.157), (0.580, 0.404, 0.741), (0.549, 0.337, 0.294),
-                (0.890, 0.467, 0.761), (0.498, 0.498, 0.498), (0.737, 0.741, 0.133),
+                (0.122, 0.467, 0.706),
+                (1.0, 0.498, 0.055),
+                (0.173, 0.627, 0.173),
+                (0.839, 0.153, 0.157),
+                (0.580, 0.404, 0.741),
+                (0.549, 0.337, 0.294),
+                (0.890, 0.467, 0.761),
+                (0.498, 0.498, 0.498),
+                (0.737, 0.741, 0.133),
                 (0.090, 0.745, 0.812),
             ]
             rgba = _cmap(row_idx % 20)
@@ -5543,7 +5573,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         if self._result is None or self._output_dir is None:
             return
         try:
-            from flowsom_pipeline_pro.src.services.export_service import ExportService
+            from services.export_service import ExportService
 
             exporter = ExportService(
                 config=self._config,
@@ -5576,7 +5606,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         if not (html_path and Path(html_path).exists()):
             return
         try:
-            from flowsom_pipeline_pro.src.visualization.html_report import (
+            from visualization.html_report import (
                 patch_curated_banner_in_html,
             )
 
@@ -5869,7 +5899,7 @@ class FlowSomAnalyzerPro(QMainWindow):
                 self._log(f"{log_prefix} fcswrite non installé : tentative via export_to_fcs.")
                 try:
                     import pandas as pd
-                    from flowsom_pipeline_pro.src.io.fcs_writer import export_to_fcs
+                    from io.fcs_writer import export_to_fcs
 
                     target_path = Path(fcs_path)
                     tmp_path = str(target_path.with_name(target_path.stem + ".tmp_patch.fcs"))
@@ -5886,7 +5916,7 @@ class FlowSomAnalyzerPro(QMainWindow):
                 self._log(f"{log_prefix} écriture fcswrite échouée : {_write_e}")
                 try:
                     import pandas as pd
-                    from flowsom_pipeline_pro.src.io.fcs_writer import export_to_fcs
+                    from io.fcs_writer import export_to_fcs
 
                     target_path = Path(fcs_path)
                     tmp_path = str(target_path.with_name(target_path.stem + ".tmp_patch.fcs"))
@@ -6012,7 +6042,7 @@ class FlowSomAnalyzerPro(QMainWindow):
 
         if self._result.curated_nodes is not None:
             try:
-                from flowsom_pipeline_pro.src.visualization.html_report import (
+                from visualization.html_report import (
                     patch_curated_banner_in_html,
                 )
 
@@ -6232,6 +6262,7 @@ class FlowSomAnalyzerPro(QMainWindow):
             self.current_fcs_adata = adata
             # Sauvegarder une copie brute pour le toggle
             import copy as _copy
+
             self._fcs_adata_raw = _copy.copy(adata)
             self._fcs_adata_raw.X = adata.X.copy()
             # Réinitialiser le mode sur "Brut" à chaque nouveau chargement
@@ -6357,8 +6388,9 @@ class FlowSomAnalyzerPro(QMainWindow):
         """Retourne un adata avec la transformation logicle appliquée à la volée sur tous les canaux."""
         import copy as _copy
         import numpy as np
+
         try:
-            from flowsom_pipeline_pro.src.core.transformers import DataTransformer
+            from core.transformers import DataTransformer
         except Exception:
             return adata_raw
 
@@ -6410,6 +6442,7 @@ class FlowSomAnalyzerPro(QMainWindow):
             self.current_fcs_adata = self._apply_log10_to_adata(self._fcs_adata_raw)
         else:
             import copy as _copy
+
             self.current_fcs_adata = _copy.copy(self._fcs_adata_raw)
             self.current_fcs_adata.X = self._fcs_adata_raw.X.copy()
 

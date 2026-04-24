@@ -1048,7 +1048,7 @@ class MRDNodeTable(QWidget):
 
     def _on_open_expert_focus(self) -> None:
         """Ouvre ExpertFocusDialog en passant tous les nœuds patients + données radar."""
-        from flowsom_pipeline_pro.gui.dialogs.expert_focus_dialog import ExpertFocusDialog
+        from gui.dialogs.expert_focus_dialog import ExpertFocusDialog
 
         # Fallback : si set_all_patient_nodes() n'a pas été appelé, on utilise
         # les nœuds MRD déjà chargés (fonctionnement dégradé mais non bloquant).

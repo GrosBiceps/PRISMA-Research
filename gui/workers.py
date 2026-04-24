@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 workers.py — QThread workers pour FlowSomAnalyzerPro.
 
@@ -16,9 +16,13 @@ import traceback
 from typing import TYPE_CHECKING, Any, List, Optional
 
 if TYPE_CHECKING:
-    from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
+    from config.pipeline_config import PipelineConfig
 
-from PyQt5.QtCore import QThread, QTimer, pyqtSignal
+import threading
+
+from PyQt5.QtCore import QCoreApplication, QThread, QTimer, pyqtSignal
+
+_dbg = logging.getLogger("prisma.workers.debug")
 
 
 class _QtLogHandler(logging.handlers.QueueHandler):
@@ -76,6 +80,11 @@ class LogCapture:
 
     def install(self) -> None:
         """Ajoute le handler au logger root. Appelé depuis le thread worker."""
+        _dbg.debug(
+            "[LogCapture.install] thread=%s tid=%s",
+            threading.current_thread().name,
+            threading.get_ident(),
+        )
         # Forcer INFO sur le root — en mode frozen certaines libs imposent WARNING
         # au démarrage, ce qui silencerait tous les messages INFO du pipeline.
         self._root_logger.setLevel(logging.INFO)
@@ -100,6 +109,12 @@ class LogCapture:
 
     def uninstall(self) -> None:
         """Retire le handler. Appelé depuis le thread principal après la fin."""
+        _dbg.debug(
+            "[LogCapture.uninstall] thread=%s tid=%s timer_active=%s",
+            threading.current_thread().name,
+            threading.get_ident(),
+            self._timer is not None and self._timer.isActive() if self._timer else False,
+        )
         self._root_logger.removeHandler(self._handler)
         self._drain_once()  # Vide les derniers messages
 
@@ -114,15 +129,34 @@ class LogCapture:
                  mémoire et ancre le timer à la boucle d'événements Qt même
                  en mode frozen console=False).
         """
+        _dbg.debug(
+            "[LogCapture.start_drain] caller_thread=%s tid=%s parent=%r",
+            threading.current_thread().name,
+            threading.get_ident(),
+            type(parent).__name__ if parent else None,
+        )
+        if self._timer is not None:
+            _dbg.warning("[LogCapture.start_drain] timer already running — stopping old timer first")
+            self._timer.stop()
+            self._timer = None
         self._timer = QTimer(parent)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._drain_once)
         self._timer.start()
+        _dbg.debug("[LogCapture.start_drain] timer started id=%d", id(self._timer))
 
     def stop_drain(self) -> None:
         """Arrête le timer de drainage. Doit être appelé depuis le thread principal."""
+        _dbg.debug(
+            "[LogCapture.stop_drain] caller_thread=%s tid=%s timer=%s active=%s",
+            threading.current_thread().name,
+            threading.get_ident(),
+            id(self._timer) if self._timer else None,
+            self._timer.isActive() if self._timer else False,
+        )
         if self._timer is not None:
             self._timer.stop()
+            self._timer.deleteLater()
             self._timer = None
         self._drain_once()  # Dernier vidage
 
@@ -221,18 +255,18 @@ class PipelineWorker(QThread):
 
     def run(self) -> None:
         """Point d'entrée du thread — exécute FlowSOMPipeline.execute()."""
-        from flowsom_pipeline_pro.src.pipeline.pipeline_executor import (
-            FlowSOMPipeline,
-            PipelineStep,
-        )
-
         # Installe le handler de log (thread-safe via QueueHandler)
         self._log_capture.install()
 
         # Logger racine local pour passer par la queue (jamais d'emit direct cross-thread)
-        _log = logging.getLogger("flowsom_pipeline_pro.worker")
+        _log = logging.getLogger("worker")
 
         try:
+            from pipeline.pipeline_executor import (
+                FlowSOMPipeline,
+                PipelineStep,
+            )
+
             _log.info("═══ Démarrage du pipeline FlowSOM ═══")
 
             # Préchauffage Numba/pynndescent JIT avant le vrai pipeline.
@@ -252,7 +286,7 @@ class PipelineWorker(QThread):
                 if not _gating_emitted and pct >= PipelineStep.GATING_DONE:
                     _gating_emitted = True
                     try:
-                        from flowsom_pipeline_pro.src.models.gate_result import gating_reports
+                        from models.gate_result import gating_reports
 
                         # Aligner le résumé UI sur la logique Sankey: chaîne COMBINED
                         # (G1 -> G2 -> G3 -> G4), sans sommer les gates entre elles.
@@ -377,11 +411,11 @@ class BatchWorker(QThread):
 
     def run(self) -> None:
         """Point d'entrée du thread batch."""
-        from flowsom_pipeline_pro.src.pipeline.batch_pipeline import BatchPipeline
+        from pipeline.batch_pipeline import BatchPipeline
 
         self._log_capture.install()
 
-        _log = logging.getLogger("flowsom_pipeline_pro.batch_worker")
+        _log = logging.getLogger("batch_worker")
 
         try:
             _log.info("═══ Démarrage du mode Batch ═══")
