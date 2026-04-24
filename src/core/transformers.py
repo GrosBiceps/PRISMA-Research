@@ -141,7 +141,7 @@ class DataTransformer:
         import re
         import numpy as np
         try:
-            from flowsom_pipeline_pro.config.constants import SCATTER_PATTERNS
+            from config.constants import SCATTER_PATTERNS
         except Exception:
             SCATTER_PATTERNS = ["FSC", "SSC", "TIME", "EVENT"]
 

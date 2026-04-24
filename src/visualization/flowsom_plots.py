@@ -31,14 +31,14 @@ try:
 except ImportError:
     _SNS_AVAILABLE = False
 
-from flowsom_pipeline_pro.src.visualization.plot_helpers import (
+from src.visualization.plot_helpers import (
     BG_COLOR,
     TEXT_COLOR,
     SPINE_COLOR,
     apply_dark_style,
     save_figure,
 )
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("visualization.flowsom_plots")
 
@@ -2268,7 +2268,7 @@ def plot_patho_pct_per_cluster(
             out_jpg = Path(output_jpg)
             out_jpg.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from flowsom_pipeline_pro.src.utils.kaleido_scope import write_image_fast
+                from src.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_jpg, fmt="jpg", width=1400, height=620, scale=2)
                 _logger.info("Patho%% par cluster (JPG) sauvegardé: %s", out_jpg.name)
             except Exception as _img_err:
@@ -2429,7 +2429,7 @@ def plot_cells_pct_per_cluster(
             out_jpg = Path(output_jpg)
             out_jpg.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from flowsom_pipeline_pro.src.utils.kaleido_scope import write_image_fast
+                from src.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_jpg, fmt="jpg", width=1400, height=620, scale=2)
                 _logger.info(
                     "%%Cellules par cluster (JPG) sauvegardé: %s", out_jpg.name
@@ -2596,7 +2596,7 @@ def plot_patho_pct_per_som_node(
             out_jpg = Path(output_jpg)
             out_jpg.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from flowsom_pipeline_pro.src.utils.kaleido_scope import write_image_fast
+                from src.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_jpg, fmt="jpg", width=max(1800, n_nodes * 22), height=680, scale=2)
                 _logger.info("Patho%% par nœud SOM (JPG) sauvegardé: %s", out_jpg.name)
             except Exception as _img_err:
@@ -2762,7 +2762,7 @@ def plot_cells_pct_per_som_node(
             out_jpg = Path(output_jpg)
             out_jpg.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from flowsom_pipeline_pro.src.utils.kaleido_scope import write_image_fast
+                from src.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_jpg, fmt="jpg", width=max(1800, n_nodes * 22), height=680, scale=2)
                 _logger.info(
                     "%%Cellules par nœud SOM (JPG) sauvegardé: %s", out_jpg.name
@@ -3387,7 +3387,7 @@ def plot_mrd_summary(
             out_png = Path(output_png)
             out_png.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from flowsom_pipeline_pro.src.utils.kaleido_scope import write_image_fast
+                from src.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_png, fmt="png", width=1800, height=950, scale=2)
                 _logger.info("MRD summary (PNG): %s", out_png.name)
             except Exception as _img_err:
@@ -3726,7 +3726,7 @@ def plot_blast_mrd_classification(
             out_png = Path(output_png)
             out_png.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from flowsom_pipeline_pro.src.utils.kaleido_scope import write_image_fast
+                from src.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_png, fmt="png", width=1800, height=900, scale=2)
                 _logger.info("Blast MRD classification (PNG): %s", out_png.name)
             except Exception as _img_err:

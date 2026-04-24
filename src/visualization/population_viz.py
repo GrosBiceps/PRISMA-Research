@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("visualization.population_viz")
 
@@ -918,7 +918,7 @@ def plot_mst_interactive(
     if not _PLOTLY_AVAILABLE:
         return None
 
-    from flowsom_pipeline_pro.src.analysis.population_mapping import (
+    from src.analysis.population_mapping import (
         POPULATION_COLORS,
         build_population_color_map,
     )
@@ -1114,7 +1114,7 @@ def plot_som_grid_interactive(
         node_to_pop = dict(zip(mapping_df["node_id"], mapping_df["assigned_pop"]))
 
     # Couleurs par population
-    from flowsom_pipeline_pro.src.analysis.population_mapping import (
+    from src.analysis.population_mapping import (
         build_population_color_map,
     )
 

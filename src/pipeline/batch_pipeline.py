@@ -53,19 +53,19 @@ from typing import Callable, Dict, List, Optional, Tuple, Any
 import numpy as np
 import pandas as pd
 
-from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
-from flowsom_pipeline_pro.src.io.fcs_reader import get_fcs_files, load_as_flow_samples
-from flowsom_pipeline_pro.src.models.sample import FlowSample
-from flowsom_pipeline_pro.src.models.pipeline_result import PipelineResult
-from flowsom_pipeline_pro.src.services.preprocessing_service import preprocess_combined
-from flowsom_pipeline_pro.src.services.clustering_service import select_markers_for_clustering
-from flowsom_pipeline_pro.src.pipeline.pipeline_executor import (
+from config.pipeline_config import PipelineConfig
+from src.io.fcs_reader import get_fcs_files, load_as_flow_samples
+from src.models.sample import FlowSample
+from src.models.pipeline_result import PipelineResult
+from src.services.preprocessing_service import preprocess_combined
+from src.services.clustering_service import select_markers_for_clustering
+from src.pipeline.pipeline_executor import (
     FlowSOMPipeline,
     PipelineCheckpointManager,
 )
-from flowsom_pipeline_pro.src.pipeline.nbm_cache_manager import NBMCacheManager
-from flowsom_pipeline_pro.src.utils.logger import GatingLogger, get_logger
-from flowsom_pipeline_pro.src.models.gate_result import gating_reports, gating_log_entries
+from src.pipeline.nbm_cache_manager import NBMCacheManager
+from src.utils.logger import GatingLogger, get_logger
+from src.models.gate_result import gating_reports, gating_log_entries
 
 _logger = get_logger("pipeline.batch")
 
@@ -645,7 +645,7 @@ class BatchPipeline:
     ) -> Optional[str]:
         """Génère (ou met à jour) le fichier synthèse_cohorte.xlsx."""
         try:
-            from flowsom_pipeline_pro.src.io.csv_exporter import (
+            from src.io.csv_exporter import (
                 extract_date_from_filename as _edf,
             )
 

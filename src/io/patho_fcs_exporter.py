@@ -17,7 +17,7 @@ La méthode utilisée pour Is_MRD est configurable : "jf" (méthode JF) ou "flo"
 Par défaut : "flo".
 
 Usage:
-    from flowsom_pipeline_pro.src.io.patho_fcs_exporter import export_patho_mrd_fcs
+    from src.io.patho_fcs_exporter import export_patho_mrd_fcs
     export_patho_mrd_fcs(df_fcs, mrd_result, output_path, mrd_method="flo")
 """
 
@@ -29,9 +29,9 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from flowsom_pipeline_pro.src.analysis.mrd_calculator import MRDResult
-from flowsom_pipeline_pro.src.io.fcs_writer import export_to_fcs_kaluza
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.analysis.mrd_calculator import MRDResult
+from src.io.fcs_writer import export_to_fcs_kaluza
+from src.utils.logger import get_logger
 
 _logger = get_logger("io.patho_fcs_exporter")
 

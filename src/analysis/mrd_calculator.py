@@ -52,7 +52,7 @@ mrd_calculator.py — Calcul de la MRD résiduelle post-FlowSOM.
 Les seuils sont paramétrables via config/mrd_config.yaml.
 
 Usage:
-    from flowsom_pipeline_pro.src.analysis.mrd_calculator import (
+    from src.analysis.mrd_calculator import (
         load_mrd_config, compute_mrd,
     )
     mrd_cfg = load_mrd_config()
@@ -76,11 +76,11 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from flowsom_pipeline_pro.src.exceptions import ClinicalMathError
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.exceptions import ClinicalMathError
+from src.utils.logger import get_logger
 
 # ARCH-1 : imports au niveau du module (évite les imports différés dans les fonctions)
-from flowsom_pipeline_pro.src.analysis.blast_detection import (
+from src.analysis.blast_detection import (
     build_blast_weights,
     score_nodes_for_blasts,
     score_nodes_mahalanobis,

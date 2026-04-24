@@ -133,6 +133,23 @@ downsampling:
   max_cells_per_file: 50000 # Nombre maximum de cellules à conserver par fichier après downsampling (ex: 20000, 50000, 100000)
   max_cells_total: 1000000  # Nombre maximum de cellules à conserver au total après downsampling (ex: 500000, 1000000, 2000000)
 
+# ── Sous-échantillonnage t-SNE / viSNE ────────────────────────────────────────
+# t-SNE est O(n²) en mémoire et en temps — un sous-échantillonnage est
+# TOUJOURS appliqué avant le calcul, quelle que soit la taille du fichier.
+#
+# Avec openTSNE (recommandé) : max_events=0 désactive la limite (openTSNE
+#   passe à l'échelle sur des millions de cellules grâce à FFT approché).
+# Sans openTSNE (fallback sklearn) : max_events ne peut pas dépasser ~50 000
+#   sans risque de freeze (O(n²) strict). La valeur ci-dessous est appliquée
+#   même si max_events=0 dans ce cas.
+#
+# Les cellules exclues du calcul t-SNE reçoivent NaN dans les colonnes
+# visne_1 / visne_2 du CSV de sortie — elles restent dans tous les autres
+# calculs (QC, clustering, export FCS).
+visne:
+  max_events: 50000       # 0 = pas de limite (recommandé avec openTSNE uniquement)
+  sampling_method: "random"  # random | density (density = préserve les populations rares)
+
 # Intégration de données (correction d'effet batch)
 # Désactivée par défaut pour éviter toute correction Harmony non souhaitée.
 data_integration:

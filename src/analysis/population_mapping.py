@@ -64,7 +64,7 @@ try:
 except ImportError:
     _PYTOMETRY_AVAILABLE = False
 
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("analysis.population_mapping")
 

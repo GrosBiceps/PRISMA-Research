@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("utils.marker_harmonizer")
 

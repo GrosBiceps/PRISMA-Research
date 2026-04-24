@@ -168,7 +168,7 @@ def _plotly_to_png(fig: Any, wide: bool = False) -> Optional[bytes]:
     try:
         # Réutilise le scope kaleido déjà démarré si disponible
         try:
-            from flowsom_pipeline_pro.src.utils.kaleido_scope import ensure_kaleido_scope
+            from src.utils.kaleido_scope import ensure_kaleido_scope
             ensure_kaleido_scope()
         except Exception:
             pass

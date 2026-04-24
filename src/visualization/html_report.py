@@ -21,7 +21,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("visualization.html_report")
 

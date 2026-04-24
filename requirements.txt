@@ -17,9 +17,18 @@ flowsom==0.2.2               # algorithme principal (fs.FlowSOM, fs.metaclusteri
 flowio==1.4.0                # lecture/écriture FCS natif (FlowIO)
 fcswrite==0.6.4              # export FCS avec colonnes de clustering
 pytometry==0.1.6             # transformations logicle/arcsinh, prétraitement
-umap-learn==0.5.11           # réduction dimensionnelle (visualisation)
+umap-learn==0.5.11           # réduction dimensionnelle UMAP
+openTSNE>=1.0.0              # t-SNE multithread rapide (viSNE) — fallback sklearn si absent
+phate>=1.0.0                 # PHATE trajectoires biologiques — fallback PCA si absent
 anndata==0.12.7              # structure de données cellules × marqueurs
 mudata>=0.3.0                # conteneur multi-modalité (FlowSOM interne)
+
+# ── Clustering avancé ────────────────────────────────────────
+phenograph>=1.5.7            # PhenoGraph : KNN graph + détection communautés Louvain/Leiden
+hdbscan>=0.8.0               # HDBSCAN : clustering densité hiérarchique
+# parc : nécessite hnswlib (compilation C++ MSVC/MinGW requise)
+#        pip install hnswlib  puis  pip install parc
+#        Fallback automatique : AgglomerativeClustering si absent
 
 # ── Calcul scientifique ──────────────────────────────────────
 numpy>=1.26,<2.0             # 1.x requis par numba ; éviter numpy 2.x

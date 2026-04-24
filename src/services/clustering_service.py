@@ -53,21 +53,21 @@ except (ImportError, OSError) as _harmony_import_error:
             _error_msg,
         )
 
-from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
-from flowsom_pipeline_pro.config.constants import SCATTER_PATTERNS
-from flowsom_pipeline_pro.src.models.sample import FlowSample
-from flowsom_pipeline_pro.src.models.pipeline_result import (
+from config.pipeline_config import PipelineConfig
+from config.constants import SCATTER_PATTERNS
+from src.models.sample import FlowSample
+from src.models.pipeline_result import (
     PipelineResult,
     ClusteringMetrics,
 )
-from flowsom_pipeline_pro.src.core.clustering import FlowSOMClusterer
-from flowsom_pipeline_pro.src.core.metaclustering import find_optimal_clusters
-from flowsom_pipeline_pro.src.utils.validators import (
+from src.core.clustering import FlowSOMClusterer
+from src.core.metaclustering import find_optimal_clusters
+from src.utils.validators import (
     check_no_fsc_ssc_in_analysis_markers,
     check_nan,
 )
-from flowsom_pipeline_pro.src.utils.logger import get_logger
-from flowsom_pipeline_pro.src.utils.class_balancer import equilibrer_pool_flowsom
+from src.utils.logger import get_logger
+from src.utils.class_balancer import equilibrer_pool_flowsom
 
 _logger = get_logger("services.clustering")
 
@@ -557,7 +557,7 @@ def run_clustering(
 
         # Reconstruire des FlowSample synthétiques à partir du DataFrame équilibré,
         # un par fichier source, pour conserver condition/file_origin par cellule.
-        from flowsom_pipeline_pro.src.models.sample import FlowSample as _FlowSample
+        from src.models.sample import FlowSample as _FlowSample
 
         _meta_cols = {"condition", "file_origin", "class", _IDX_COL}
         _marker_cols = [c for c in df_balanced.columns if c not in _meta_cols]

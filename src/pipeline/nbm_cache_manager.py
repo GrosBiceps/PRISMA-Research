@@ -54,9 +54,9 @@ try:
 except ImportError:
     _JOBLIB_AVAILABLE = False
 
-from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
-from flowsom_pipeline_pro.src.models.sample import FlowSample
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from config.pipeline_config import PipelineConfig
+from src.models.sample import FlowSample
+from src.utils.logger import get_logger
 
 _logger = get_logger("pipeline.nbm_cache")
 

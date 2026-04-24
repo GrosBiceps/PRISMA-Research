@@ -30,15 +30,15 @@ try:
 except ImportError:
     _PLOTLY_AVAILABLE = False
 
-from flowsom_pipeline_pro.src.visualization.plot_helpers import (
+from src.visualization.plot_helpers import (
     plot_density,
     plot_gating,
     add_gate_rectangle,
     save_figure,
     BG_COLOR,
 )
-from flowsom_pipeline_pro.src.core.gating import PreGating
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.core.gating import PreGating
+from src.utils.logger import get_logger
 
 _logger = get_logger("visualization.gating_plots")
 
@@ -1586,7 +1586,7 @@ def generate_interactive_gating_dashboard(
                 return masks[k]
         return None
 
-    from flowsom_pipeline_pro.src.core.gating import PreGating
+    from src.core.gating import PreGating
 
     fsc_a_idx = PreGating.find_marker_index(var_names, ["FSC-A"])
     fsc_h_idx = PreGating.find_marker_index(var_names, ["FSC-H"])

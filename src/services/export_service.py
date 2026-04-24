@@ -18,24 +18,24 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
-from flowsom_pipeline_pro.src.io.fcs_writer import export_to_fcs_kaluza
-from flowsom_pipeline_pro.src.io.csv_exporter import (
+from config.pipeline_config import PipelineConfig
+from src.io.fcs_writer import export_to_fcs_kaluza
+from src.io.csv_exporter import (
     export_cells_csv,
     export_statistics_csv,
     export_mfi_matrix_csv,
     export_per_file_csv,
     compute_cluster_statistics,
 )
-from flowsom_pipeline_pro.src.io.cluster_distribution_exporter import (
+from src.io.cluster_distribution_exporter import (
     export_cluster_distribution,
 )
-from flowsom_pipeline_pro.src.io.json_exporter import (
+from src.io.json_exporter import (
     export_analysis_metadata,
     build_analysis_metadata,
     export_gating_log,
 )
-from flowsom_pipeline_pro.src.utils.logger import GatingLogger, get_logger
+from src.utils.logger import GatingLogger, get_logger
 
 _logger = get_logger("services.export")
 
@@ -267,7 +267,7 @@ class ExportService:
         Returns:
             True si au moins un graphique généré.
         """
-        from flowsom_pipeline_pro.src.visualization.gating_plots import (
+        from src.visualization.gating_plots import (
             generate_all_gating_plots,
         )
 
@@ -293,7 +293,7 @@ class ExportService:
         Returns:
             Dict {fig_name: figure_object} des figures générées.
         """
-        from flowsom_pipeline_pro.src.visualization.flowsom_plots import (
+        from src.visualization.flowsom_plots import (
             plot_mfi_heatmap,
             plot_metacluster_sizes,
         )
@@ -332,7 +332,7 @@ class ExportService:
         Returns:
             Dict avec clés: chemins fichiers + 'fig_sankey' (go.Figure).
         """
-        from flowsom_pipeline_pro.src.visualization.gating_plots import (
+        from src.visualization.gating_plots import (
             generate_sankey_diagram,
             generate_per_file_sankey,
         )
@@ -400,7 +400,7 @@ class ExportService:
         Returns:
             Chemin du fichier HTML si succès, None sinon.
         """
-        from flowsom_pipeline_pro.src.visualization.html_report import (
+        from src.visualization.html_report import (
             generate_html_report,
         )
 
@@ -471,7 +471,7 @@ class ExportService:
         Returns:
             Chemin du fichier PDF si succès, None sinon.
         """
-        from flowsom_pipeline_pro.src.visualization.pdf_report import (
+        from src.visualization.pdf_report import (
             generate_pdf_report,
         )
 

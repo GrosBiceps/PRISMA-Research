@@ -6,7 +6,7 @@ représentent parfois < 1% du pool. FlowSOM, optimisé pour la densité, rate le
 clusters rares. Ce module impose un rapport sain/patho contrôlé AVANT le SOM.
 
 Usage:
-    from flowsom_pipeline_pro.src.utils.class_balancer import equilibrer_pool_flowsom
+    from src.utils.class_balancer import equilibrer_pool_flowsom
 
     df_balanced = equilibrer_pool_flowsom(
         samples=processed_samples,
@@ -26,7 +26,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from flowsom_pipeline_pro.src.models.sample import FlowSample
+from src.models.sample import FlowSample
 
 _logger = logging.getLogger("utils.class_balancer")
 

@@ -119,8 +119,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from flowsom_pipeline_pro.src.exceptions import ClinicalMathError, PanelConfigError
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.exceptions import ClinicalMathError, PanelConfigError
+from src.utils.logger import get_logger
 
 # Imports optionnels — dégradation gracieuse si scipy/sklearn absents
 try:

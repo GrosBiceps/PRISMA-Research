@@ -5,5 +5,10 @@ from prisma.strategies import (  # noqa: F401
     tsne_strategy,
     phate_strategy,
     flowsom_strategy,
+    flowsom_like_strategy,
+    phenograph_strategy,
+    hdbscan_strategy,
+    parc_strategy,
+    spade_strategy,
     spectral_strategy,
 )

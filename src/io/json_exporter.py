@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("io.json_exporter")
 

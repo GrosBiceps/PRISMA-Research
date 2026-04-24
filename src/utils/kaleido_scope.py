@@ -5,7 +5,7 @@ garder un seul processus Chromium actif pour tous les exports d'une session.
 Sans ça, chaque fig.write_image() démarre et arrête Chromium (~2-4s par figure).
 
 Utilisation :
-    from flowsom_pipeline_pro.src.utils.kaleido_scope import (
+    from src.utils.kaleido_scope import (
         ensure_kaleido_scope, warm_up_kaleido, write_image_fast
     )
     ensure_kaleido_scope()          # idempotent, démarre le serveur une fois

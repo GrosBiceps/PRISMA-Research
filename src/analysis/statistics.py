@@ -23,13 +23,13 @@ except ImportError:
     _SCIPY_AVAILABLE = False
     warnings.warn("scipy requis pour les tests statistiques: pip install scipy")
 
-from flowsom_pipeline_pro.config.constants import (
+from config.constants import (
     MRD_LOD,
     MRD_LOQ,
     NBM_FREQ_MAX,
     MRD_FOLD_CHANGE_THRESHOLD,
 )
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("analysis.statistics")
 

@@ -36,7 +36,7 @@ from ..models.gate_result import (
     log_gating_event,
 )
 from .gating import PreGating
-from flowsom_pipeline_pro.config.constants import (
+from config.constants import (
     GMM_MAX_SAMPLES,
     RANSAC_R2_THRESHOLD,
     RANSAC_MAD_FACTOR,
@@ -102,7 +102,7 @@ class GatingSession:
 
 # Instance par défaut — maintient la rétrocompatibilité avec les imports
 # existants dans pipeline_executor.py qui font :
-#   from flowsom_pipeline_pro.src.core.auto_gating import ransac_scatter_data, ...
+#   from src.core.auto_gating import ransac_scatter_data, ...
 _default_session: GatingSession = GatingSession()
 ransac_scatter_data: Dict[str, Any] = _default_session.ransac_scatter_data
 singlets_summary_per_file: List[Dict[str, Any]] = _default_session.singlets_summary_per_file
@@ -1612,7 +1612,7 @@ class AutoGating:
         mask_kde = np.zeros(n_cells, dtype=bool)
         threshold_kde = 0.0
         try:
-            from flowsom_pipeline_pro.src.analysis.prescreening import gate_cd34_kde
+            from src.analysis.prescreening import gate_cd34_kde
 
             # Reconstruit un masque valide sur l'ensemble (n_cells) pointant
             # uniquement les cellules CD45dim valides.

@@ -27,15 +27,15 @@ try:
 except ImportError:
     _ANNDATA_AVAILABLE = False
 
-from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
-from flowsom_pipeline_pro.src.models.sample import FlowSample
-from flowsom_pipeline_pro.src.core.transformers import DataTransformer
-from flowsom_pipeline_pro.src.core.normalizers import DataNormalizer
-from flowsom_pipeline_pro.src.core.gating import PreGating
-from flowsom_pipeline_pro.src.core.auto_gating import AutoGating
-from flowsom_pipeline_pro.src.utils.logger import GatingLogger, get_logger
-from flowsom_pipeline_pro.src.utils.marker_harmonizer import harmonize_marker_names
-from flowsom_pipeline_pro.src.utils.validators import (
+from config.pipeline_config import PipelineConfig
+from src.models.sample import FlowSample
+from src.core.transformers import DataTransformer
+from src.core.normalizers import DataNormalizer
+from src.core.gating import PreGating
+from src.core.auto_gating import AutoGating
+from src.utils.logger import GatingLogger, get_logger
+from src.utils.marker_harmonizer import harmonize_marker_names
+from src.utils.validators import (
     check_nan,
     check_min_cells,
     check_no_fsc_ssc_in_analysis_markers,
@@ -719,7 +719,7 @@ def preprocess_combined(
     gating_figures: Dict[str, Any] = {}
     if gating_plot_dir is not None and gate_masks:
         try:
-            from flowsom_pipeline_pro.src.visualization.gating_plots import (
+            from src.visualization.gating_plots import (
                 generate_all_gating_plots,
             )
 
@@ -796,10 +796,10 @@ def preprocess_combined(
     # post-gating sans recalculer le KDE (rapide, pas de double-calcul).
     if gating_plot_dir is not None:
         try:
-            from flowsom_pipeline_pro.src.visualization.gating_plots import (
+            from src.visualization.gating_plots import (
                 plot_cd45_kde_qc as _plot_cd45_kde,
             )
-            from flowsom_pipeline_pro.src.core.gating import PreGating as _PG
+            from src.core.gating import PreGating as _PG
 
             _cd45_idx = _PG.find_marker_index(
                 var_names, ["CD45", "CD45-PECY5", "CD45-PC5"]
@@ -1009,7 +1009,7 @@ def _count_cd45_raw(
     Returns:
         Figure matplotlib ou None.
     """
-    from flowsom_pipeline_pro.src.core.auto_gating import AutoGating
+    from src.core.auto_gating import AutoGating
 
     cd45_idx = PreGating.find_marker_index(
         var_names, ["CD45", "CD45-PECY5", "CD45-PC5"]

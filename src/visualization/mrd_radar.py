@@ -9,7 +9,7 @@ sous forme d'un Spider Plot Plotly avec :
   - Z-scores normalisés, axe de -3.5 à +4.5
 
 Usage :
-    from flowsom_pipeline_pro.src.visualization.mrd_radar import (
+    from src.visualization.mrd_radar import (
         plot_mrd_blast_radar_final,
     )
     fig = plot_mrd_blast_radar_final(
@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("visualization.mrd_radar")
 

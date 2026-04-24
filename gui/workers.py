@@ -256,7 +256,7 @@ class PipelineWorker(QThread):
             pass  # Non bloquant — si le warmup échoue, le vrai pipeline prend le relais
 
     def run(self) -> None:
-        """Point d'entrée du thread — exécute FlowSOMPipeline.execute()."""
+        """Point d'entrée du thread — exécute le pipeline RUO modulaire."""
         # Installe le handler de log (thread-safe via QueueHandler)
         self._log_capture.install()
 
@@ -264,108 +264,34 @@ class PipelineWorker(QThread):
         _log = logging.getLogger("worker")
 
         try:
-            from pipeline.pipeline_executor import (
-                FlowSOMPipeline,
-                PipelineStep,
-            )
+            from prisma.pipeline.research_executor import ResearchPipelineExecutor
 
-            _log.info("═══ Démarrage du pipeline FlowSOM ═══")
+            _log.info("═══ Démarrage du pipeline RUO modulaire ═══")
 
-            # Préchauffage Numba/pynndescent JIT avant le vrai pipeline.
-            # Évite le freeze "Pas de réponse" dû à la compilation LLVM au premier appel.
-            _log.info("[Init] Compilation JIT Numba (première exécution)…")
-            self._warmup_numba()
-            _log.info("[Init] JIT prêt.")
+            clustering_methods = list(getattr(self._config, "clustering_methods_enabled", []) or [])
+            clustering_selected = str(getattr(self._config, "clustering_method", "")).lower()
+            if "flowsom" in clustering_methods or clustering_selected == "flowsom":
+                _log.info("[Init] Compilation JIT Numba (FlowSOM)…")
+                self._warmup_numba()
+                _log.info("[Init] JIT prêt.")
 
-            pipeline = FlowSOMPipeline(self._config)
-            _gating_emitted = False
+            executor = ResearchPipelineExecutor()
 
-            def _on_progress(step: PipelineStep, pct: int) -> None:
-                """Callback appelé par le pipeline à chaque étape majeure."""
-                nonlocal _gating_emitted
-                self.progress.emit(pct)
-                # Émettre le résumé de gating une seule fois dès que GATING_DONE
-                if not _gating_emitted and pct >= PipelineStep.GATING_DONE:
-                    _gating_emitted = True
-                    try:
-                        from models.gate_result import gating_reports
+            def _on_progress(step: Any, pct: int) -> None:
+                self.progress.emit(int(pct))
 
-                        # Aligner le résumé UI sur la logique Sankey: chaîne COMBINED
-                        # (G1 -> G2 -> G3 -> G4), sans sommer les gates entre elles.
-                        events = pipeline._gating_logger.events
-                        gate_map = {e.gate_name: e for e in events if e.file == "COMBINED"}
-
-                        gate_order = ("G4_cd34", "G3_cd45", "G2_singlets", "G1_debris")
-                        terminal_event = next(
-                            (gate_map[g] for g in gate_order if g in gate_map), None
-                        )
-                        first_event = gate_map.get("G1_debris", terminal_event)
-
-                        if terminal_event is not None and first_event is not None:
-                            n_kept = int(terminal_event.n_after)
-                            n_total = int(first_event.n_before)
-                            n_gates = len(gate_map)
-                        elif gating_reports:
-                            # Fallback défensif en cas d'événements COMBINED absents
-                            n_kept = int(gating_reports[-1].n_kept)
-                            n_total = int(gating_reports[0].n_total)
-                            n_gates = len(gating_reports)
-                        else:
-                            n_kept = 0
-                            n_total = 0
-                            n_gates = 0
-
-                        fallbacks = [
-                            g.gate_name
-                            for g in gating_reports
-                            if g.warnings or (g.method and "fallback" in g.method.lower())
-                        ]
-                        self.gating_done.emit(
-                            {
-                                "n_kept": n_kept,
-                                "n_total": n_total,
-                                "pct_kept": round(n_kept / max(n_total, 1) * 100, 1),
-                                "n_gates": n_gates,
-                                "fallbacks": fallbacks,
-                            }
-                        )
-                    except Exception:
-                        pass  # Non bloquant
-
-            result = pipeline.execute(progress_callback=_on_progress)
+            result = executor.execute(self._config, progress_callback=_on_progress)
 
             self.progress.emit(100)
 
-            # Émettre le résultat du pré-screening si disponible
-            _ps = getattr(result, "prescreening_result", None) if result else None
-            if _ps is not None:
-                try:
-                    self.prescreening_done.emit(
-                        {
-                            "n_cd34_pos": int(_ps.n_cd34_pos),
-                            "n_cd34_neg": int(_ps.n_cd34_neg),
-                            "n_cd45dim": int(_ps.n_cd45dim),
-                            "ratio_pct": float(_ps.ratio_pct),
-                            "gmm_ratio_pct": float(_ps.gmm_ratio_pct),
-                            "kde_ratio_pct": float(_ps.kde_ratio_pct),
-                            "alert_level": str(_ps.alert_level),
-                            "alert_message": str(_ps.alert_message),
-                            "method_used": str(_ps.method_used),
-                            "laip_tracking_recommended": bool(_ps.laip_tracking_recommended),
-                            "interpretation_warning": str(_ps.interpretation_warning),
-                        }
-                    )
-                except Exception:
-                    pass  # Non bloquant
-
             if result is not None and result.success:
                 _log.info(
-                    "═══ Pipeline terminé — %s cellules, %s métaclusters ═══",
+                    "═══ Pipeline RUO terminé — %s cellules, %s clusters ═══",
                     f"{result.n_cells:,}",
                     result.n_metaclusters,
                 )
             else:
-                _log.info("═══ Pipeline terminé avec des avertissements ═══")
+                _log.info("═══ Pipeline RUO terminé avec des avertissements ═══")
 
             self.finished.emit(result)
 

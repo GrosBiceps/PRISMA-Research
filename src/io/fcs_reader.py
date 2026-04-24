@@ -29,8 +29,8 @@ except Exception as _flowsom_err:
     _FLOWSOM_AVAILABLE = False
     warnings.warn(f"flowsom non disponible ({type(_flowsom_err).__name__}: {_flowsom_err})")
 
-from flowsom_pipeline_pro.src.models.sample import FlowSample
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.models.sample import FlowSample
+from src.utils.logger import get_logger
 
 _logger = get_logger("io.fcs_reader")
 

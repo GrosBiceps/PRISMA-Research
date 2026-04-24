@@ -36,14 +36,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from flowsom_pipeline_pro.config.pipeline_config import PopulationMappingConfig
-from flowsom_pipeline_pro.src.analysis.blast_detection import (
+from config.pipeline_config import PopulationMappingConfig
+from src.analysis.blast_detection import (
     build_blast_weights,
     build_blast_score_dataframe,
     compute_reference_normalization,
     trace_blast_cells_to_fcs_source,
 )
-from flowsom_pipeline_pro.src.analysis.population_mapping import (
+from src.analysis.population_mapping import (
     POPULATION_COLORS,
     apply_cyto_transform_matrix,
     build_direct_mapping_a_only,
@@ -58,7 +58,7 @@ from flowsom_pipeline_pro.src.analysis.population_mapping import (
     map_populations_to_nodes_v5,
     normalize_col_name,
 )
-from flowsom_pipeline_pro.src.utils.logger import get_logger
+from src.utils.logger import get_logger
 
 _logger = get_logger("services.population_mapping")
 
@@ -443,7 +443,7 @@ class PopulationMappingService:
     ) -> None:
         """§10.4c–§10.6 — Génération de toutes les visualisations."""
         try:
-            from flowsom_pipeline_pro.src.visualization.population_viz import (
+            from src.visualization.population_viz import (
                 plot_blast_heatmap,
                 plot_blast_radar,
                 plot_blast_scores_bar,
