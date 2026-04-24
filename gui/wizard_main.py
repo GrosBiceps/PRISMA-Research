@@ -46,6 +46,7 @@ from PyQt5.QtWidgets import (
 
 try:
     from PyQt5.QtSvg import QSvgWidget
+
     _SVG_AVAILABLE = True
 except ImportError:
     _SVG_AVAILABLE = False
@@ -60,6 +61,7 @@ from gui.prisma_icons import get_prisma_icon
 
 try:
     import qtawesome as qta
+
     _QTA = True
 except ImportError:
     _QTA = False
@@ -105,6 +107,7 @@ class DarkComboBox(QComboBox):
 # ══════════════════════════════════════════════════════════════════════════════
 # DropZoneLabel — drag-drop FCS réel (repris de main_window.py)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class DropZoneLabel(QLabel):
     files_dropped = pyqtSignal(list)  # liste de chemins
@@ -193,12 +196,12 @@ _LOGO_SVG = b"""<svg width="196" height="56" viewBox="0 0 196 56" fill="none" xm
 # ══════════════════════════════════════════════════════════════════════════════
 
 _STEPS = [
-    ("1", "Input & QC",       "Import FCS · PeacoQC · FlowAI"),
-    ("2", "Gating",           "Auto-gating · Manuel · Spectral"),
-    ("3", "Dim. Reduction",   "viSNE · UMAP · PHATE"),
-    ("4", "HD Clustering",    "FlowSOM · PhenoGraph · HDBSCAN · PARC · SPADE"),
+    ("1", "Input & QC", "Import FCS · PeacoQC · FlowAI"),
+    ("2", "Gating", "Auto-gating · Manuel · Spectral"),
+    ("3", "Dim. Reduction", "viSNE · UMAP · PHATE"),
+    ("4", "HD Clustering", "FlowSOM · PhenoGraph · HDBSCAN · PARC · SPADE"),
     ("5", "Biomarker & Adv.", "CITRUS · Trajectoire · Harmony"),
-    ("6", "Export",           "FCS · CSV · PDF · HTML"),
+    ("6", "Export", "FCS · CSV · PDF · HTML"),
 ]
 
 _STEP_ICONS = [
@@ -214,11 +217,12 @@ _STEP_ICONS = [
 # WizardSidebar — reprend exactement StepSidebar de main_window.py
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class WizardSidebar(QWidget):
     STATE_PENDING = 0
-    STATE_ACTIVE  = 1
-    STATE_DONE    = 2
-    STATE_ERROR   = 3
+    STATE_ACTIVE = 1
+    STATE_DONE = 2
+    STATE_ERROR = 3
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -347,6 +351,7 @@ class WizardSidebar(QWidget):
 # FcsCanvasPanel — panneau droit escamotable
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class FcsCanvasPanel(QWidget):
     """Panneau droit escamotable: Scatter / Population Tree / Sunburst."""
 
@@ -406,6 +411,7 @@ class FcsCanvasPanel(QWidget):
 # ══════════════════════════════════════════════════════════════════════════════
 # Pages de base
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _scroll_wrap(w: QWidget) -> QScrollArea:
     sa = QScrollArea()
@@ -515,6 +521,7 @@ class _BaseStepPage(QWidget):
 # Helper: panneau sélecteur standardisé
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _make_selector_panel(section_title: str, toggles: List[tuple]) -> tuple:
     """
     Crée un panneau sélecteur gauche PRISMA.
@@ -578,8 +585,10 @@ def _make_params_tabs(forms: List[tuple]) -> tuple:
 # Step 1 — Input & QC
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class _FolderDropZone(DropZoneLabel):
     """DropZone acceptant un dossier (pas des fichiers individuels)."""
+
     folder_selected = pyqtSignal(str)
 
     def __init__(self, placeholder: str, parent: Optional[QWidget] = None) -> None:
@@ -630,8 +639,8 @@ class InputQCPage(_BaseStepPage):
             "Méthodes QC",
             [
                 ("peacoqc", "PeacoQC", True),
-                ("flowai",  "FlowAI",  False),
-            ]
+                ("flowai", "FlowAI", False),
+            ],
         )
         self._toggles["peacoqc"].toggled.connect(lambda v: self._on_toggle("peacoqc", v))
         self._toggles["flowai"].toggled.connect(lambda v: self._on_toggle("flowai", v))
@@ -655,10 +664,12 @@ class InputQCPage(_BaseStepPage):
         sep.setObjectName("sidebarSeparator")
         vl.addWidget(sep)
 
-        _, self._tab_widget, self._tab_map = _make_params_tabs([
-            ("peacoqc", "PeacoQC", PeacoQCForm()),
-            ("flowai",  "FlowAI",  FlowAIForm()),
-        ])
+        _, self._tab_widget, self._tab_map = _make_params_tabs(
+            [
+                ("peacoqc", "PeacoQC", PeacoQCForm()),
+                ("flowai", "FlowAI", FlowAIForm()),
+            ]
+        )
         self._tab_widget.setTabVisible(self._tab_map["flowai"], False)
         vl.addWidget(self._tab_widget.parent(), 1)
 
@@ -680,9 +691,7 @@ class InputQCPage(_BaseStepPage):
         lbl_in.setFixedWidth(110)
         row_in.addWidget(lbl_in)
 
-        self._drop_fcs = _FolderDropZone(
-            "  ↓  Dossier .fcs d'entrée  (glisser ou parcourir)"
-        )
+        self._drop_fcs = _FolderDropZone("  ↓  Dossier .fcs d'entrée  (glisser ou parcourir)")
         self._drop_fcs.folder_selected.connect(self.fcs_folder_changed)
         row_in.addWidget(self._drop_fcs, 1)
 
@@ -702,9 +711,7 @@ class InputQCPage(_BaseStepPage):
         lbl_out.setFixedWidth(110)
         row_out.addWidget(lbl_out)
 
-        self._drop_output = _FolderDropZone(
-            "  ↓  Dossier de sortie  (glisser ou parcourir)"
-        )
+        self._drop_output = _FolderDropZone("  ↓  Dossier de sortie  (glisser ou parcourir)")
         self._drop_output.folder_selected.connect(self.output_folder_changed)
         row_out.addWidget(self._drop_output, 1)
 
@@ -745,6 +752,7 @@ class InputQCPage(_BaseStepPage):
 # Step 2 — Gating Strategy
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class GatingPage(_BaseStepPage):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(1, parent)
@@ -753,10 +761,10 @@ class GatingPage(_BaseStepPage):
         panel, self._toggles = _make_selector_panel(
             "Mode Gating",
             [
-                ("auto",    "Auto-gating",         True),
-                ("manual",  "Manuel / Hiérarchie", False),
+                ("auto", "Auto-gating", True),
+                ("manual", "Manuel / Hiérarchie", False),
                 ("pregate", "Pré-gating spectral", False),
-            ]
+            ],
         )
         for key in self._toggles:
             self._toggles[key].toggled.connect(lambda v, k=key: self._on_toggle(k, v))
@@ -765,11 +773,13 @@ class GatingPage(_BaseStepPage):
     def _build_params(self) -> QWidget:
         from gui.widgets.parameter_tabs import GatingStrategyForm
 
-        w, self._tab_widget, self._tab_map = _make_params_tabs([
-            ("auto",    "Stratégie",  GatingStrategyForm()),
-            ("manual",  "Manuel",     GatingStrategyForm()),
-            ("pregate", "Spectral",   GatingStrategyForm()),
-        ])
+        w, self._tab_widget, self._tab_map = _make_params_tabs(
+            [
+                ("auto", "Stratégie", GatingStrategyForm()),
+                ("manual", "Manuel", GatingStrategyForm()),
+                ("pregate", "Spectral", GatingStrategyForm()),
+            ]
+        )
         self._tab_widget.setTabVisible(self._tab_map["manual"], False)
         self._tab_widget.setTabVisible(self._tab_map["pregate"], False)
         return w
@@ -784,6 +794,7 @@ class GatingPage(_BaseStepPage):
 # Step 3 — Dimensionality Reduction
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class DimRedPage(_BaseStepPage):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(2, parent)
@@ -793,9 +804,9 @@ class DimRedPage(_BaseStepPage):
             "Algorithmes",
             [
                 ("visne", "viSNE (t-SNE)", True),
-                ("umap",  "UMAP",          True),
-                ("phate", "PHATE",         False),
-            ]
+                ("umap", "UMAP", True),
+                ("phate", "PHATE", False),
+            ],
         )
         for key in self._toggles:
             self._toggles[key].toggled.connect(lambda v, k=key: self._on_toggle(k, v))
@@ -804,11 +815,13 @@ class DimRedPage(_BaseStepPage):
     def _build_params(self) -> QWidget:
         from gui.widgets.parameter_tabs import ViSNEForm, UMAPForm, PHATEForm
 
-        w, self._tab_widget, self._tab_map = _make_params_tabs([
-            ("visne", "viSNE", ViSNEForm()),
-            ("umap",  "UMAP",  UMAPForm()),
-            ("phate", "PHATE", PHATEForm()),
-        ])
+        w, self._tab_widget, self._tab_map = _make_params_tabs(
+            [
+                ("visne", "viSNE", ViSNEForm()),
+                ("umap", "UMAP", UMAPForm()),
+                ("phate", "PHATE", PHATEForm()),
+            ]
+        )
         self._tab_widget.setTabVisible(self._tab_map["phate"], False)
         return w
 
@@ -822,6 +835,7 @@ class DimRedPage(_BaseStepPage):
 # Step 4 — HD Clustering
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class ClusteringPage(_BaseStepPage):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(3, parent)
@@ -830,12 +844,12 @@ class ClusteringPage(_BaseStepPage):
         panel, self._toggles = _make_selector_panel(
             "Algorithmes",
             [
-                ("flowsom",    "FlowSOM",    True),
+                ("flowsom", "FlowSOM", True),
                 ("phenograph", "PhenoGraph", False),
-                ("hdbscan",    "HDBSCAN",    False),
-                ("parc",       "PARC",       False),
-                ("spade",      "SPADE",      False),
-            ]
+                ("hdbscan", "HDBSCAN", False),
+                ("parc", "PARC", False),
+                ("spade", "SPADE", False),
+            ],
         )
         for key in self._toggles:
             self._toggles[key].toggled.connect(lambda v, k=key: self._on_toggle(k, v))
@@ -843,16 +857,22 @@ class ClusteringPage(_BaseStepPage):
 
     def _build_params(self) -> QWidget:
         from gui.widgets.parameter_tabs import (
-            FlowSOMForm, PhenoGraphForm, HDBSCANForm, PARCForm, SPADEForm
+            FlowSOMForm,
+            PhenoGraphForm,
+            HDBSCANForm,
+            PARCForm,
+            SPADEForm,
         )
 
-        w, self._tab_widget, self._tab_map = _make_params_tabs([
-            ("flowsom",    "FlowSOM",    FlowSOMForm()),
-            ("phenograph", "PhenoGraph", PhenoGraphForm()),
-            ("hdbscan",    "HDBSCAN",    HDBSCANForm()),
-            ("parc",       "PARC",       PARCForm()),
-            ("spade",      "SPADE",      SPADEForm()),
-        ])
+        w, self._tab_widget, self._tab_map = _make_params_tabs(
+            [
+                ("flowsom", "FlowSOM", FlowSOMForm()),
+                ("phenograph", "PhenoGraph", PhenoGraphForm()),
+                ("hdbscan", "HDBSCAN", HDBSCANForm()),
+                ("parc", "PARC", PARCForm()),
+                ("spade", "SPADE", SPADEForm()),
+            ]
+        )
         for key in ["phenograph", "hdbscan", "parc", "spade"]:
             self._tab_widget.setTabVisible(self._tab_map[key], False)
         return w
@@ -866,6 +886,7 @@ class ClusteringPage(_BaseStepPage):
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 5 — Biomarker & Advanced
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class AdvancedPage(_BaseStepPage):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -893,10 +914,10 @@ class AdvancedPage(_BaseStepPage):
 
         self._toggles = {}
         for key, label, checked in [
-            ("citrus",     "CITRUS",        False),
-            ("wanderlust", "Wanderlust",     False),
-            ("wishbone",   "Wishbone",       False),
-            ("harmony",    "Harmony (Batch)",False),
+            ("citrus", "CITRUS", False),
+            ("wanderlust", "Wanderlust", False),
+            ("wishbone", "Wishbone", False),
+            ("harmony", "Harmony (Batch)", False),
         ]:
             t = ToggleSwitch(label, checked=checked)
             t.toggled.connect(lambda v, k=key: self._on_toggle(k, v))
@@ -915,9 +936,7 @@ class AdvancedPage(_BaseStepPage):
         return w
 
     def _build_params(self) -> QWidget:
-        from gui.widgets.parameter_tabs import (
-            CITRUSForm, WanderlustForm, WishboneForm, HarmonyForm
-        )
+        from gui.widgets.parameter_tabs import CITRUSForm, WanderlustForm, WishboneForm, HarmonyForm
 
         # Placeholder quand rien de sélectionné
         ph = QWidget()
@@ -928,13 +947,15 @@ class AdvancedPage(_BaseStepPage):
         lbl.setObjectName("subtitleLabel")
         ph_vl.addWidget(lbl)
 
-        w, self._tab_widget, self._tab_map = _make_params_tabs([
-            ("placeholder", "—",          ph),
-            ("citrus",      "CITRUS",     CITRUSForm()),
-            ("wanderlust",  "Wanderlust", WanderlustForm()),
-            ("wishbone",    "Wishbone",   WishboneForm()),
-            ("harmony",     "Harmony",    HarmonyForm()),
-        ])
+        w, self._tab_widget, self._tab_map = _make_params_tabs(
+            [
+                ("placeholder", "—", ph),
+                ("citrus", "CITRUS", CITRUSForm()),
+                ("wanderlust", "Wanderlust", WanderlustForm()),
+                ("wishbone", "Wishbone", WishboneForm()),
+                ("harmony", "Harmony", HarmonyForm()),
+            ]
+        )
         for key in ["citrus", "wanderlust", "wishbone", "harmony"]:
             self._tab_widget.setTabVisible(self._tab_map[key], False)
         return w
@@ -957,6 +978,7 @@ class AdvancedPage(_BaseStepPage):
 # Step 6 — Export & Reporting
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class ExportPage(_BaseStepPage):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(5, parent)
@@ -965,26 +987,29 @@ class ExportPage(_BaseStepPage):
         panel, self._toggles = _make_selector_panel(
             "Formats",
             [
-                ("fcs",  "FCS annoté",   True),
-                ("csv",  "CSV / Excel",  True),
-                ("pdf",  "Rapport PDF",  False),
+                ("fcs", "FCS annoté", True),
+                ("csv", "CSV / Excel", True),
+                ("pdf", "Rapport PDF", False),
                 ("html", "Rapport HTML", False),
-            ]
+            ],
         )
         return panel
 
     def _build_params(self) -> QWidget:
         from gui.widgets.parameter_tabs import ExportForm
 
-        w, self._tab_widget, self._tab_map = _make_params_tabs([
-            ("export", "Configuration", ExportForm()),
-        ])
+        w, self._tab_widget, self._tab_map = _make_params_tabs(
+            [
+                ("export", "Configuration", ExportForm()),
+            ]
+        )
         return w
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PrismaWizard — Fenêtre principale
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class PrismaWizard(QMainWindow):
     """Fenêtre principale PRISMA Research — Wizard RUO 6 étapes."""
@@ -1205,6 +1230,29 @@ class PrismaWizard(QMainWindow):
     def _toggle_canvas(self, checked: bool) -> None:
         self._canvas.setVisible(checked)
 
+    def _sync_pages_to_config(self, cfg: Any) -> None:
+        """
+        Synchronise les paramètres des formulaires vers la config.
+
+        Cette méthode doit être appelée avant le lancement du pipeline.
+        Elle boucle sur self._pages et appelle la méthode sync_to_config(cfg)
+        de chaque page si elle existe.
+
+        Pour l'instant, les pages ne possèdent pas encore cette interface.
+        À implémenter dans les sous-classes de _BaseStepPage.
+
+        Args:
+            cfg: PipelineConfig à remplir avec les paramètres des pages.
+        """
+        # TODO: Implémenter la synchronisation des pages
+        # for page in self._pages:
+        #     if hasattr(page, 'sync_to_config'):
+        #         try:
+        #             page.sync_to_config(cfg)
+        #         except Exception as e:
+        #             log.warning("[wizard] Erreur sync page: %s", e)
+        pass
+
     def _on_run(self) -> None:
         from gui.workers import PipelineWorker
 
@@ -1223,12 +1271,20 @@ class PrismaWizard(QMainWindow):
             self.log_output.append_log("[WARNING] Analyse déjà en cours.")
             return
 
-        # Construire la config minimale
+        # Construire la config et synchroniser les pages
         try:
             from config.pipeline_config import PipelineConfig
+
             cfg = PipelineConfig()
-            cfg.input_dir = fcs_folder
-            cfg.output_dir = output_folder
+
+            # ✅ CORRECTION 1 : Mapper correctement vers cfg.paths (pas cfg.input_dir)
+            cfg.paths.patho_folder = fcs_folder
+            cfg.paths.output_dir = output_folder
+
+            # ✅ CORRECTION 2 : Synchroniser les paramètres depuis les pages formulaires
+            # Chaque page devrait implémenter sync_to_config(cfg) pour remplir ses paramètres
+            self._sync_pages_to_config(cfg)
+
         except Exception as exc:
             self.log_output.append_log(f"[ERROR] Config: {exc}")
             return
@@ -1336,6 +1392,7 @@ QLabel#subtitleLabel {
 # ══════════════════════════════════════════════════════════════════════════════
 # Entry point
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
