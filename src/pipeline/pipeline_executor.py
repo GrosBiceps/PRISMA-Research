@@ -2202,6 +2202,65 @@ class FlowSOMPipeline:
                 except Exception as _me:
                     _logger.debug("Export dashboard performance échoué: %s", _me)
 
+            # ── Analyse Citrus (optionnelle, cohorte multi-samples) ───────────
+            _citrus_result = None
+            _citrus_cfg = getattr(config, "citrus", None)
+            if _citrus_cfg is not None and getattr(_citrus_cfg, "enabled", False):
+                try:
+                    from flowsom_pipeline_pro.src.analysis.citrus_strategy import (
+                        CitrusStrategy,
+                        CitrusParams,
+                    )
+                    from flowsom_pipeline_pro.src.models.experiment import Experiment
+                    from flowsom_pipeline_pro.src.models.sample import Sample
+
+                    _logger.info("Citrus: démarrage analyse stratifiante...")
+                    _citrus_exp = Experiment("citrus_cohort")
+                    _citrus_endpoints = []
+                    _endpoint_col = getattr(_citrus_cfg, "endpoint_column", "group")
+
+                    for _fs in samples:
+                        _ep_val = getattr(_fs, "metadata", {}).get(_endpoint_col)
+                        if _ep_val is None:
+                            continue
+                        _markers_used = getattr(_fs, "markers", selected_markers)
+                        _df_s = df_cells[df_cells.get("sample_id", pd.Series()) == getattr(_fs, "sample_id", None)] if "sample_id" in df_cells.columns else pd.DataFrame()
+                        if _df_s.empty and hasattr(_fs, "data"):
+                            _df_s = _fs.data
+                        if _df_s is None or (hasattr(_df_s, "empty") and _df_s.empty):
+                            continue
+                        _s = Sample(
+                            sample_id=str(getattr(_fs, "sample_id", id(_fs))),
+                            events=_df_s[[c for c in _markers_used if c in _df_s.columns]] if _markers_used else _df_s,
+                        )
+                        _citrus_exp.add_sample(_s)
+                        _citrus_endpoints.append(float(_ep_val) if getattr(_citrus_cfg, "endpoint_type", "classification") == "continuous" else int(_ep_val))
+
+                    if len(_citrus_exp.samples) >= 2 and len(_citrus_endpoints) == len(_citrus_exp.samples):
+                        _cp = CitrusParams(
+                            n_cells_per_sample=getattr(_citrus_cfg, "n_cells_per_sample", 1000),
+                            min_cluster_size_percent=getattr(_citrus_cfg, "min_cluster_size_percent", 0.05),
+                            feature_type=getattr(_citrus_cfg, "feature_type", "abundances"),
+                            model_type=getattr(_citrus_cfg, "model_type", "glmnet"),
+                            endpoint_type=getattr(_citrus_cfg, "endpoint_type", "classification"),
+                            n_cv_folds=getattr(_citrus_cfg, "n_cv_folds", 5),
+                        )
+                        _citrus_result = CitrusStrategy(_cp).run_experiment(
+                            _citrus_exp, np.array(_citrus_endpoints)
+                        )
+                        _logger.info(
+                            "Citrus: %d clusters stratifiants (score=%.3f)",
+                            len(_citrus_result.stratifying_clusters),
+                            _citrus_result.model_score,
+                        )
+                    else:
+                        _logger.warning(
+                            "Citrus: insuffisant (%d samples valides) — ignoré",
+                            len(_citrus_exp.samples),
+                        )
+                except Exception as _ce:
+                    _logger.warning("Citrus ignoré (erreur): %s", _ce)
+
             # ── Assemblage du résultat ────────────────────────────────────────
             elapsed = time.time() - start_time
 
@@ -2221,6 +2280,7 @@ class FlowSOMPipeline:
                 patho_stem=_patho_stem,
                 patho_date=_patho_date,
                 prescreening_result=_prescreening_result,
+                citrus_result=_citrus_result,
             )
 
             _report(PipelineStep.DONE)

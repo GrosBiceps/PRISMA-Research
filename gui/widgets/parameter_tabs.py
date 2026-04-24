@@ -135,6 +135,7 @@ class ParameterDashboard(QWidget):
         self._build_tab_spectral_mrd()
         self._build_tab_batch_correction()
         self._build_tab_export()
+        self._build_tab_citrus()
 
         self.load(config)
 
@@ -786,6 +787,71 @@ class ParameterDashboard(QWidget):
         binder = ConfigBinder(self._config, bindings)
         self._binders.append(binder)
         self._tabs.addTab(_scroll_wrap(container), "Export")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Onglet 7 — Citrus
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_tab_citrus(self) -> None:
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setSpacing(10)
+
+        g_main, v_main = _group("Citrus — Analyse stratifiante cohorte")
+        fg = FormGrid()
+        self.chk_citrus_enabled = fg.add_toggle(
+            "Activer Citrus", False, "chk_citrus_enabled",
+            tooltip="Identifie les clusters corrélés avec un endpoint clinique (Bruggner et al. 2014)"
+        )
+        fg.add_section("── Endpoint ──")
+        self.edit_citrus_endpoint_col = fg.add_lineedit(
+            "Colonne endpoint", "group",
+            tooltip="Nom de la colonne dans les métadonnées portant l'endpoint (ex: group, os_days)"
+        )
+        self.combo_citrus_endpoint_type = fg.add_combo(
+            "Type endpoint", ["classification", "continuous"],
+            tooltip="classification = groupes discrets, continuous = valeur numérique"
+        )
+        fg.add_section("── Features ──")
+        self.combo_citrus_feature_type = fg.add_combo(
+            "Features", ["abundances", "medians", "both"],
+            tooltip="Abondances = proportion de cellules par cluster; médianes = expression médiane"
+        )
+        fg.add_section("── Modèle ──")
+        self.combo_citrus_model = fg.add_combo(
+            "Modèle", ["glmnet", "sam"],
+            tooltip="glmnet = Lasso/régression logistique; sam = Mann-Whitney + FDR"
+        )
+        self.spin_citrus_cv = fg.add_spin(
+            "Folds CV", 5, (2, 20), step=1,
+            tooltip="Nombre de folds pour la validation croisée (glmnet)"
+        )
+        fg.add_section("── Clustering ──")
+        self.spin_citrus_cells = fg.add_spin(
+            "Cellules/sample", 1000, (100, 10000), step=100,
+            tooltip="Nombre de cellules sous-échantillonnées par sample pour le clustering"
+        )
+        self.spin_citrus_min_size = fg.add_dspin(
+            "Taille min cluster (%)", 5.0, (0.5, 30.0), step=0.5,
+            tooltip="Ignorer les clusters < X% du total"
+        )
+        v_main.addWidget(fg)
+        vbox.addWidget(g_main)
+        vbox.addStretch()
+
+        bindings = [
+            CheckBinding(self.chk_citrus_enabled, "citrus", "enabled"),
+            LineEditBinding(self.edit_citrus_endpoint_col, "citrus", "endpoint_column"),
+            ComboBinding(self.combo_citrus_endpoint_type, "citrus", "endpoint_type"),
+            ComboBinding(self.combo_citrus_feature_type, "citrus", "feature_type"),
+            ComboBinding(self.combo_citrus_model, "citrus", "model_type"),
+            SpinBinding(self.spin_citrus_cv, "citrus", "n_cv_folds"),
+            SpinBinding(self.spin_citrus_cells, "citrus", "n_cells_per_sample"),
+            DoubleSpinBinding(self.spin_citrus_min_size, "citrus", "min_cluster_size_percent"),
+        ]
+        binder = ConfigBinder(self._config, bindings)
+        self._binders.append(binder)
+        self._tabs.addTab(_scroll_wrap(container), "Citrus")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Gestion MRD extra (stocké dans _extra dict, pas dataclass)

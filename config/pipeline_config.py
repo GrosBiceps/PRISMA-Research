@@ -174,9 +174,7 @@ class DownsamplingConfig:
 class HarmonyParamsConfig:
     sigma: float = 0.05
     nclust: Optional[int] = 30  # None = auto (N/30, très lent sur grands datasets)
-    block_size: float = (
-        0.20  # Fraction de cellules par bloc (défaut harmonypy: 0.05 = 20 blocs)
-    )
+    block_size: float = 0.20  # Fraction de cellules par bloc (défaut harmonypy: 0.05 = 20 blocs)
     max_iter: int = 10
     max_iter_kmeans: int = 10  # Itérations K-means internes (défaut harmonypy: 20)
     verbose: bool = False
@@ -310,6 +308,20 @@ class PathoFcsExportConfig:
 
 
 @dataclass
+class CitrusConfig:
+    """Configuration de l'analyse Citrus (identification clusters stratifiants)."""
+
+    enabled: bool = False
+    endpoint_column: str = "group"        # Colonne de cohort_metadata portant l'endpoint
+    endpoint_type: str = "classification" # "classification" | "continuous"
+    feature_type: str = "abundances"      # "abundances" | "medians" | "both"
+    model_type: str = "glmnet"            # "glmnet" | "sam"
+    n_cells_per_sample: int = 1000
+    min_cluster_size_percent: float = 0.05
+    n_cv_folds: int = 5
+
+
+@dataclass
 class BatchConfig:
     """Configuration du mode traitement par lots (batch)."""
 
@@ -329,7 +341,9 @@ class ExportModeConfig:
     """
 
     mode: str = "standard"  # "standard" | "compact"
-    export_csv: bool = True  # false = ne pas exporter les CSV dans le dossier csv (complet, stats, MFI)
+    export_csv: bool = (
+        True  # false = ne pas exporter les CSV dans le dossier csv (complet, stats, MFI)
+    )
     export_per_file_csv: bool = True  # true = exporter un CSV par fichier FCS source
 
 
@@ -351,21 +365,25 @@ class PipelineConfig:
     # Sections YAML libres — accessibles via config.extra("section_name")
     _extra: dict = field(default_factory=dict, repr=False)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    population_mapping: PopulationMappingConfig = field(
-        default_factory=PopulationMappingConfig
-    )
+    population_mapping: PopulationMappingConfig = field(default_factory=PopulationMappingConfig)
     performance_monitoring: PerformanceMonitoringConfig = field(
         default_factory=PerformanceMonitoringConfig
     )
     patho_fcs_export: PathoFcsExportConfig = field(default_factory=PathoFcsExportConfig)
     batch: BatchConfig = field(default_factory=BatchConfig)
     export_mode: ExportModeConfig = field(default_factory=ExportModeConfig)
+    citrus: CitrusConfig = field(default_factory=CitrusConfig)
     stratified_downsampling: StratifiedDownsamplingConfig = field(
         default_factory=StratifiedDownsamplingConfig
     )
-    data_integration: DataIntegrationConfig = field(
-        default_factory=DataIntegrationConfig
-    )
+    data_integration: DataIntegrationConfig = field(default_factory=DataIntegrationConfig)
+    # Sélection dynamique RUO (Wizard v3)
+    qc_method: str = "peacoqc"  # peacoqc | flowai
+    dimred_method: str = "umap"  # umap | visne | phate
+    clustering_method: str = "flowsom"  # flowsom | phenograph | parc | hdbscan
+    qc_methods_enabled: List[str] = field(default_factory=lambda: ["peacoqc"])
+    dimred_methods_enabled: List[str] = field(default_factory=lambda: ["umap"])
+    clustering_methods_enabled: List[str] = field(default_factory=lambda: ["flowsom"])
 
     # ------------------------------------------------------------------
     # Constructeurs alternatifs
@@ -428,6 +446,12 @@ class PipelineConfig:
             "export_mode",
             "stratified_downsampling",
             "data_integration",
+            "qc_method",
+            "dimred_method",
+            "clustering_method",
+            "qc_methods_enabled",
+            "dimred_methods_enabled",
+            "clustering_methods_enabled",
             "pipeline_version",
         }
         cfg._extra = {k: v for k, v in raw.items() if k not in _structured_keys}
@@ -611,21 +635,15 @@ class PipelineConfig:
         sd = raw.get("stratified_downsampling", {})
         if sd:
             if "balance_conditions" in sd:
-                cfg.stratified_downsampling.balance_conditions = bool(
-                    sd["balance_conditions"]
-                )
+                cfg.stratified_downsampling.balance_conditions = bool(sd["balance_conditions"])
             if "imbalance_ratio" in sd:
-                cfg.stratified_downsampling.imbalance_ratio = float(
-                    sd["imbalance_ratio"]
-                )
+                cfg.stratified_downsampling.imbalance_ratio = float(sd["imbalance_ratio"])
             if "nbm_ids" in sd:
                 cfg.stratified_downsampling.nbm_ids = list(sd["nbm_ids"] or [])
             if "seed" in sd:
                 cfg.stratified_downsampling.seed = int(sd["seed"])
             if "allow_oversampling" in sd:
-                cfg.stratified_downsampling.allow_oversampling = bool(
-                    sd["allow_oversampling"]
-                )
+                cfg.stratified_downsampling.allow_oversampling = bool(sd["allow_oversampling"])
 
         di = raw.get("data_integration", {})
         if di:
@@ -639,27 +657,37 @@ class PipelineConfig:
                     cfg.data_integration.harmony_params.sigma = float(hp["sigma"])
                 if "nclust" in hp:
                     v = hp["nclust"]
-                    cfg.data_integration.harmony_params.nclust = (
-                        int(v) if v is not None else None
-                    )
+                    cfg.data_integration.harmony_params.nclust = int(v) if v is not None else None
                 if "block_size" in hp:
-                    cfg.data_integration.harmony_params.block_size = float(
-                        hp["block_size"]
-                    )
+                    cfg.data_integration.harmony_params.block_size = float(hp["block_size"])
                 if "max_iter" in hp:
                     cfg.data_integration.harmony_params.max_iter = int(hp["max_iter"])
                 if "max_iter_kmeans" in hp:
-                    cfg.data_integration.harmony_params.max_iter_kmeans = int(
-                        hp["max_iter_kmeans"]
-                    )
+                    cfg.data_integration.harmony_params.max_iter_kmeans = int(hp["max_iter_kmeans"])
                 if "verbose" in hp:
                     cfg.data_integration.harmony_params.verbose = bool(hp["verbose"])
                 if "markers_to_align" in hp:
                     cfg.data_integration.harmony_params.markers_to_align = [
-                        str(m).strip()
-                        for m in (hp["markers_to_align"] or [])
-                        if str(m).strip()
+                        str(m).strip() for m in (hp["markers_to_align"] or []) if str(m).strip()
                     ]
+
+        if "qc_method" in raw:
+            cfg.qc_method = str(raw["qc_method"])
+        if "dimred_method" in raw:
+            cfg.dimred_method = str(raw["dimred_method"])
+        if "clustering_method" in raw:
+            cfg.clustering_method = str(raw["clustering_method"])
+
+        if "qc_methods_enabled" in raw:
+            cfg.qc_methods_enabled = [str(v).lower() for v in (raw["qc_methods_enabled"] or [])]
+        if "dimred_methods_enabled" in raw:
+            cfg.dimred_methods_enabled = [
+                str(v).lower() for v in (raw["dimred_methods_enabled"] or [])
+            ]
+        if "clustering_methods_enabled" in raw:
+            cfg.clustering_methods_enabled = [
+                str(v).lower() for v in (raw["clustering_methods_enabled"] or [])
+            ]
 
         # Validation
         cfg._validate()
@@ -795,6 +823,61 @@ class PipelineConfig:
                 "doit être une liste de chaînes."
             )
 
+        allowed_qc = {"peacoqc", "flowai"}
+        allowed_dimred = {"umap", "visne", "tsne", "phate"}
+        allowed_clustering = {"flowsom", "phenograph", "parc", "hdbscan", "spade", "flowsom_like"}
+
+        self.qc_method = str(self.qc_method).lower().strip()
+        self.dimred_method = str(self.dimred_method).lower().strip()
+        self.clustering_method = str(self.clustering_method).lower().strip()
+
+        if self.qc_method not in allowed_qc:
+            warnings.warn(f"qc_method '{self.qc_method}' inconnu. Basculement sur 'peacoqc'.")
+            self.qc_method = "peacoqc"
+
+        if self.dimred_method not in allowed_dimred:
+            warnings.warn(f"dimred_method '{self.dimred_method}' inconnu. Basculement sur 'umap'.")
+            self.dimred_method = "umap"
+
+        if self.clustering_method not in allowed_clustering:
+            warnings.warn(
+                f"clustering_method '{self.clustering_method}' inconnu. Basculement sur 'flowsom'."
+            )
+            self.clustering_method = "flowsom"
+
+        self.qc_methods_enabled = [
+            str(v).lower().strip() for v in self.qc_methods_enabled if str(v).strip()
+        ]
+        self.dimred_methods_enabled = [
+            str(v).lower().strip() for v in self.dimred_methods_enabled if str(v).strip()
+        ]
+        self.clustering_methods_enabled = [
+            str(v).lower().strip() for v in self.clustering_methods_enabled if str(v).strip()
+        ]
+
+        self.qc_methods_enabled = [v for v in self.qc_methods_enabled if v in allowed_qc]
+        self.dimred_methods_enabled = [
+            v for v in self.dimred_methods_enabled if v in allowed_dimred
+        ]
+        self.clustering_methods_enabled = [
+            v for v in self.clustering_methods_enabled if v in allowed_clustering
+        ]
+
+        if not self.qc_methods_enabled:
+            self.qc_methods_enabled = [self.qc_method]
+        if self.qc_method not in self.qc_methods_enabled:
+            self.qc_methods_enabled.insert(0, self.qc_method)
+
+        if not self.dimred_methods_enabled:
+            self.dimred_methods_enabled = [self.dimred_method]
+        if self.dimred_method not in self.dimred_methods_enabled:
+            self.dimred_methods_enabled.insert(0, self.dimred_method)
+
+        if not self.clustering_methods_enabled:
+            self.clustering_methods_enabled = [self.clustering_method]
+        if self.clustering_method not in self.clustering_methods_enabled:
+            self.clustering_methods_enabled.insert(0, self.clustering_method)
+
     # ------------------------------------------------------------------
     # Utilitaires
     # ------------------------------------------------------------------
@@ -812,5 +895,8 @@ class PipelineConfig:
             f"transform={self.transform.method}, "
             f"grid={self.flowsom.xdim}x{self.flowsom.ydim}, "
             f"metaclusters={self.flowsom.n_metaclusters}, "
-            f"compare_mode={self.analysis.compare_mode})"
+            f"compare_mode={self.analysis.compare_mode}, "
+            f"qc={self.qc_method}, "
+            f"dimred={self.dimred_method}, "
+            f"clustering={self.clustering_method})"
         )

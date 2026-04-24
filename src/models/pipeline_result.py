@@ -71,6 +71,9 @@ class PipelineResult:
     curated_mrd_cells:   Optional[int]   = None   # Nombre de cellules MRD après curation
     curated_nodes:       Optional[List[Dict[str, Any]]] = None  # Nœuds validés par l'expert
 
+    # ── Citrus (analyse stratifiante cohorte) ───────────────────────────
+    citrus_result: Optional[Any] = None  # CitrusResult — None si non activé
+
     # ── Pré-screening CD34+/CD45dim ─────────────────────────────────────
     # Résultat du pré-screening heuristique (toujours calculé, indépendamment des options).
     prescreening_result: Optional[Any] = None  # PrescreeningResult

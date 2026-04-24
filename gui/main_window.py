@@ -1891,6 +1891,7 @@ class FlowSomAnalyzerPro(QMainWindow):
         self._build_clusters_tab()  # 3 — Clusters
         self._build_results_tab()  # 4 — Résultats clusters
         self._build_fcs_viewer_tab()  # 5 — Visualisation FCS
+        self._build_citrus_tab()   # 6 — Citrus
         layout.addWidget(self.tabs, 1)
 
         return page
@@ -2655,6 +2656,96 @@ class FlowSomAnalyzerPro(QMainWindow):
 
         _ico_fcs = _icon("prisma.fcs-file", "#7EC8E3", 16)
         self.tabs.addTab(tab, _ico_fcs or QIcon(), "VIEWER FCS")
+
+    def _build_citrus_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        hdr = QHBoxLayout()
+        lbl = QLabel("Citrus — Clusters stratifiants (Bruggner et al. 2014)")
+        lbl.setObjectName("sectionLabel")
+        hdr.addWidget(lbl)
+        hdr.addStretch()
+        layout.addLayout(hdr)
+
+        lbl_desc = QLabel(
+            "Identifie les sous-populations cellulaires dont l'abondance ou l'expression "
+            "corrèle avec un endpoint clinique. Activez Citrus dans l'onglet Paramètres → Citrus."
+        )
+        lbl_desc.setWordWrap(True)
+        lbl_desc.setObjectName("subtitleLabel")
+        layout.addWidget(lbl_desc)
+
+        # Bandeau score
+        self._citrus_score_lbl = QLabel("Score CV : —")
+        self._citrus_score_lbl.setObjectName("subtitleLabel")
+        layout.addWidget(self._citrus_score_lbl)
+
+        # Tableau clusters stratifiants
+        self._citrus_table = QTableWidget()
+        self._citrus_table.setColumnCount(5)
+        self._citrus_table.setHorizontalHeaderLabels(
+            ["Cluster", "Taille (%)", "Abondance moy.", "Importance", "Marqueur dominant"]
+        )
+        self._citrus_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._citrus_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._citrus_table.setAlternatingRowColors(False)
+        layout.addWidget(self._citrus_table, 1)
+
+        # Résumé texte
+        self._citrus_txt = QTextEdit()
+        self._citrus_txt.setReadOnly(True)
+        self._citrus_txt.setMaximumHeight(160)
+        self._citrus_txt.setPlaceholderText("Lancez le pipeline avec Citrus activé pour voir les résultats…")
+        layout.addWidget(self._citrus_txt)
+
+        _ico_citrus = _icon("prisma.dot-plot", "#A8E6CF", 16)
+        self.tabs.addTab(tab, _ico_citrus or QIcon(), "CITRUS")
+
+    def _populate_citrus_tab(self, result: Any) -> None:
+        citrus = getattr(result, "citrus_result", None)
+        if citrus is None:
+            self._citrus_score_lbl.setText("Citrus non activé — cochez Paramètres → Citrus → Activer Citrus")
+            self._citrus_table.setRowCount(0)
+            self._citrus_txt.setPlainText("")
+            return
+
+        self._citrus_score_lbl.setText(
+            f"Score CV : {citrus.model_score:.3f}  |  Modèle : {citrus.model_type}  |  "
+            f"Endpoint : {citrus.endpoint_type}  |  Samples : {citrus.n_samples}  |  "
+            f"Cellules : {citrus.n_cells_total:,}"
+        )
+
+        clusters = citrus.stratifying_clusters
+        self._citrus_table.setRowCount(len(clusters))
+        for row, cl in enumerate(clusters):
+            # Marqueur avec médiane la plus haute
+            dominant = ""
+            if cl.median_expressions:
+                dominant = max(cl.median_expressions, key=lambda k: cl.median_expressions[k])
+
+            self._citrus_table.setItem(row, 0, QTableWidgetItem(str(cl.cluster_id)))
+            self._citrus_table.setItem(row, 1, QTableWidgetItem(f"{cl.size_percent:.1f}%"))
+            self._citrus_table.setItem(row, 2, QTableWidgetItem(f"{cl.mean_abundance:.4f}"))
+            self._citrus_table.setItem(row, 3, QTableWidgetItem(f"{cl.feature_importance:.4f}"))
+            self._citrus_table.setItem(row, 4, QTableWidgetItem(dominant))
+
+        # Résumé textuel
+        lines = [
+            f"Analyse Citrus — {len(clusters)} cluster(s) stratifiant(s)\n",
+            f"Score CV : {citrus.model_score:.3f}",
+            f"Modèle : {citrus.model_type} | Endpoint : {citrus.endpoint_type}",
+            f"Canaux clustering : {', '.join(citrus.clustering_channels[:8])}{'…' if len(citrus.clustering_channels) > 8 else ''}",
+            "",
+        ]
+        for cl in clusters[:10]:
+            lines.append(
+                f"Cluster {cl.cluster_id:3d} | {cl.size_percent:5.1f}% cellules | "
+                f"importance={cl.feature_importance:.4f} | abondance moy.={cl.mean_abundance:.4f}"
+            )
+        self._citrus_txt.setPlainText("\n".join(lines))
 
     # ==================================================================
     # LOGIQUE : Chargement config
@@ -4066,6 +4157,7 @@ class FlowSomAnalyzerPro(QMainWindow):
             self._populate_cluster_table(result)
             self._populate_pregate_tab(result)
             self._load_output_plots(result)
+            self._populate_citrus_tab(result)
             method_used = self.combo_mrd_method.currentText()
             self._home_tab.load_result(result, method_used)
             # Afficher/masquer la barre ELN selon l'état du checkbox
@@ -4149,6 +4241,7 @@ class FlowSomAnalyzerPro(QMainWindow):
                 self._populate_results(result)
                 self._populate_cluster_list(result)
                 self._populate_cluster_table(result)
+                self._populate_citrus_tab(result)
                 self._result = result
                 break
 
