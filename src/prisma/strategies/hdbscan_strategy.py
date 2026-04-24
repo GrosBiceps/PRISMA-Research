@@ -18,6 +18,7 @@ import logging
 import numpy as np
 
 from prisma.core.registry import StrategyRegistry
+from prisma.core.gpu_context import GPUContext
 from prisma.strategies.base import ClusterParams
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,9 @@ class HDBSCANStrategy:
         metric: str,
     ) -> np.ndarray:
         # ── GPU cuML ────────────────────────────────────────────────────────
-        if _CUML_AVAILABLE and cuHDBSCAN is not None:
+        if _CUML_AVAILABLE and cuHDBSCAN is not None and not GPUContext.use_gpu():
+            logger.info("[HDBSCAN] Exécution forcée sur CPU (Version de référence) demandée par l'utilisateur.")
+        elif _CUML_AVAILABLE and cuHDBSCAN is not None:
             try:
                 logger.info("[HDBSCAN] Accélération GPU (cuML RAPIDS) — %d cellules", len(data))
                 model = cuHDBSCAN(

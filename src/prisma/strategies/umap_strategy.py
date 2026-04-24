@@ -13,6 +13,7 @@ from typing import Any, Dict
 import numpy as np
 
 from prisma.core.registry import StrategyRegistry
+from prisma.core.gpu_context import GPUContext
 from prisma.strategies.base import DimReducParams
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,8 @@ class UMAPStrategy:
             umap_params.n_neighbors, umap_params.min_dist,
         )
 
-        if _CUML_AVAILABLE:
+        if _CUML_AVAILABLE and GPUContext.use_gpu():
+            logger.info("[UMAP] Accélération GPU (cuML) détectée.")
             reducer = cuUMAP(
                 n_components=umap_params.n_components,
                 n_neighbors=umap_params.n_neighbors,
@@ -69,6 +71,10 @@ class UMAPStrategy:
                 random_state=umap_params.seed,
             )
         else:
+            if _CUML_AVAILABLE and not GPUContext.use_gpu():
+                logger.info("[UMAP] Exécution forcée sur CPU (Version de référence) demandée par l'utilisateur.")
+            else:
+                logger.warning("[UMAP] GPU/cuML non disponible. Exécution sur CPU.")
             reducer = umap_learn.UMAP(
                 n_components=umap_params.n_components,
                 n_neighbors=umap_params.n_neighbors,

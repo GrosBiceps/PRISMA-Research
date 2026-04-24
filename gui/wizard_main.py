@@ -516,6 +516,89 @@ class _BaseStepPage(QWidget):
         w.setObjectName("stepContent")
         return w
 
+    def _enabled_toggle_keys(self) -> List[str]:
+        toggles = getattr(self, "_toggles", {})
+        if not isinstance(toggles, dict):
+            return []
+        enabled: List[str] = []
+        for key, widget in toggles.items():
+            if key.startswith("__"):  # clés internes (__gpu__, …) exclues
+                continue
+            try:
+                if bool(widget.isChecked()):
+                    enabled.append(str(key))
+            except Exception:
+                continue
+        return enabled
+
+    def _active_method_key(self, fallback: Optional[str] = None) -> Optional[str]:
+        enabled = self._enabled_toggle_keys()
+        if not enabled:
+            return fallback
+
+        tab_map = getattr(self, "_tab_map", {})
+        tab_widget = getattr(self, "_tab_widget", None)
+        if tab_widget is not None and isinstance(tab_map, dict):
+            try:
+                current_idx = int(tab_widget.currentIndex())
+                for key in enabled:
+                    if key in tab_map and int(tab_map[key]) == current_idx:
+                        return key
+            except Exception:
+                pass
+        return enabled[0]
+
+    @staticmethod
+    def _collect_form_values(form: QWidget) -> Dict[str, Any]:
+        from PyQt5.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QLineEdit, QSpinBox
+
+        values: Dict[str, Any] = {}
+        for name, value in vars(form).items():
+            key = str(name)
+            for prefix in ("spin_", "dspin_", "combo_", "edit_", "toggle_", "chk_"):
+                if key.startswith(prefix):
+                    key = key[len(prefix) :]
+                    break
+
+            if isinstance(value, QSpinBox):
+                values[key] = int(value.value())
+            elif isinstance(value, QDoubleSpinBox):
+                values[key] = float(value.value())
+            elif isinstance(value, QComboBox):
+                values[key] = str(value.currentText())
+            elif isinstance(value, QLineEdit):
+                values[key] = str(value.text()).strip()
+            elif isinstance(value, QCheckBox):
+                values[key] = bool(value.isChecked())
+            elif hasattr(value, "isChecked"):
+                try:
+                    values[key] = bool(value.isChecked())
+                except Exception:
+                    continue
+        return values
+
+    def _params_for_method(self, method_key: str) -> Dict[str, Any]:
+        tab_map = getattr(self, "_tab_map", {})
+        tab_widget = getattr(self, "_tab_widget", None)
+        if tab_widget is None or method_key not in tab_map:
+            return {}
+
+        idx = int(tab_map[method_key])
+        page = tab_widget.widget(idx)
+        if page is None:
+            return {}
+        try:
+            form = page.widget() if hasattr(page, "widget") else page
+        except Exception:
+            form = page
+        if not isinstance(form, QWidget):
+            return {}
+        return self._collect_form_values(form)
+
+    def sync_to_config(self, cfg: Any) -> None:
+        """Surcharge optionnelle dans les pages spécialisées."""
+        return
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Helper: panneau sélecteur standardisé
@@ -554,6 +637,32 @@ def _make_selector_panel(section_title: str, toggles: List[tuple]) -> tuple:
         widgets[key] = t
 
     vl.addStretch()
+
+    # ── Bloc GPU toggle (commun à toutes les pages algorithmes) ───────────────
+    sep_gpu = QFrame()
+    sep_gpu.setFrameShape(QFrame.HLine)
+    sep_gpu.setObjectName("sidebarSeparator")
+    vl.addWidget(sep_gpu)
+    vl.addSpacing(4)
+
+    gpu_toggle = ToggleSwitch("Accélération GPU", checked=True)
+    gpu_toggle.setToolTip(
+        "Active NVIDIA RAPIDS (cuML/cuGraph) si disponible.\n"
+        "Désactiver force l'implémentation CPU de référence\n"
+        "pour une reproductibilité exacte avec les publications."
+    )
+    vl.addWidget(gpu_toggle)
+
+    note = QLabel(
+        "ℹ CPU = implémentation\nde référence (exacte)\n GPU = portage optimisé"
+    )
+    note.setObjectName("brandSubtitle")
+    note.setWordWrap(True)
+    note.setStyleSheet("font-size: 8pt; color: rgba(238,242,247,0.55); padding: 2px 0px;")
+    vl.addWidget(note)
+    vl.addSpacing(6)
+
+    widgets["__gpu__"] = gpu_toggle
     return w, widgets
 
 
@@ -747,6 +856,18 @@ class InputQCPage(_BaseStepPage):
         if idx is not None:
             self._tab_widget.setTabVisible(idx, visible)
 
+    def sync_to_config(self, cfg: Any) -> None:
+        enabled = self._enabled_toggle_keys()
+        selected = self._active_method_key(fallback="peacoqc") or "peacoqc"
+
+        cfg.qc_methods_enabled = enabled or [selected]
+        cfg.qc_method = selected
+
+        wizard_cfg = cfg._extra.setdefault("wizard", {})
+        wizard_cfg["qc_params"] = {
+            key: self._params_for_method(key) for key in cfg.qc_methods_enabled
+        }
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 2 — Gating Strategy
@@ -789,6 +910,18 @@ class GatingPage(_BaseStepPage):
         if idx is not None:
             self._tab_widget.setTabVisible(idx, visible)
 
+    def sync_to_config(self, cfg: Any) -> None:
+        enabled = self._enabled_toggle_keys()
+        selected = self._active_method_key(fallback="auto") or "auto"
+
+        cfg.pregate.apply = bool(enabled)
+        cfg.pregate.mode = "manual" if selected == "manual" else "auto"
+
+        wizard_cfg = cfg._extra.setdefault("wizard", {})
+        wizard_cfg["gating_method"] = selected
+        wizard_cfg["gating_methods_enabled"] = enabled
+        wizard_cfg["gating_params"] = {key: self._params_for_method(key) for key in enabled}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 3 — Dimensionality Reduction
@@ -803,12 +936,14 @@ class DimRedPage(_BaseStepPage):
         panel, self._toggles = _make_selector_panel(
             "Algorithmes",
             [
-                ("visne", "viSNE (t-SNE)", True),
-                ("umap", "UMAP", True),
-                ("phate", "PHATE", False),
+                ("visne", "viSNE  [GPU+/Réf:CPU]", True),
+                ("umap",  "UMAP   [GPU+/Réf:CPU]", True),
+                ("phate", "PHATE  [Réf:CPU]",       False),
             ],
         )
         for key in self._toggles:
+            if key == "__gpu__":
+                continue
             self._toggles[key].toggled.connect(lambda v, k=key: self._on_toggle(k, v))
         return panel
 
@@ -830,6 +965,25 @@ class DimRedPage(_BaseStepPage):
         if idx is not None:
             self._tab_widget.setTabVisible(idx, visible)
 
+    def sync_to_config(self, cfg: Any) -> None:
+        from prisma.core.gpu_context import GPUContext
+
+        enabled = self._enabled_toggle_keys()
+        selected = self._active_method_key(fallback="umap") or "umap"
+
+        cfg.dimred_methods_enabled = enabled or [selected]
+        cfg.dimred_method = selected
+
+        gpu_toggle = self._toggles.get("__gpu__")
+        use_gpu = gpu_toggle.isChecked() if gpu_toggle is not None else True
+        cfg.gpu.enabled = use_gpu
+        GPUContext.set(use_gpu)
+
+        wizard_cfg = cfg._extra.setdefault("wizard", {})
+        wizard_cfg["dimred_params"] = {
+            key: self._params_for_method(key) for key in cfg.dimred_methods_enabled
+        }
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 4 — HD Clustering
@@ -844,14 +998,16 @@ class ClusteringPage(_BaseStepPage):
         panel, self._toggles = _make_selector_panel(
             "Algorithmes",
             [
-                ("flowsom", "FlowSOM", True),
-                ("phenograph", "PhenoGraph", False),
-                ("hdbscan", "HDBSCAN", False),
-                ("parc", "PARC", False),
-                ("spade", "SPADE", False),
+                ("flowsom",    "FlowSOM      [Réf:CPU]",       True),
+                ("phenograph", "PhenoGraph   [GPU+/Réf:CPU]",  False),
+                ("hdbscan",    "HDBSCAN      [GPU+/Réf:CPU]",  False),
+                ("parc",       "PARC         [Réf:CPU]",       False),
+                ("spade",      "SPADE        [Réf:CPU]",       False),
             ],
         )
         for key in self._toggles:
+            if key == "__gpu__":
+                continue
             self._toggles[key].toggled.connect(lambda v, k=key: self._on_toggle(k, v))
         return panel
 
@@ -881,6 +1037,25 @@ class ClusteringPage(_BaseStepPage):
         idx = self._tab_map.get(key)
         if idx is not None:
             self._tab_widget.setTabVisible(idx, visible)
+
+    def sync_to_config(self, cfg: Any) -> None:
+        from prisma.core.gpu_context import GPUContext
+
+        enabled = self._enabled_toggle_keys()
+        selected = self._active_method_key(fallback="flowsom") or "flowsom"
+
+        cfg.clustering_methods_enabled = enabled or [selected]
+        cfg.clustering_method = selected
+
+        gpu_toggle = self._toggles.get("__gpu__")
+        use_gpu = gpu_toggle.isChecked() if gpu_toggle is not None else True
+        cfg.gpu.enabled = use_gpu
+        GPUContext.set(use_gpu)
+
+        wizard_cfg = cfg._extra.setdefault("wizard", {})
+        wizard_cfg["clustering_params"] = {
+            key: self._params_for_method(key) for key in cfg.clustering_methods_enabled
+        }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -973,6 +1148,14 @@ class AdvancedPage(_BaseStepPage):
         if ph_idx is not None:
             self._tab_widget.setTabVisible(ph_idx, not any_active)
 
+    def sync_to_config(self, cfg: Any) -> None:
+        enabled = self._enabled_toggle_keys()
+        cfg.data_integration.enabled = "harmony" in enabled
+
+        wizard_cfg = cfg._extra.setdefault("wizard", {})
+        wizard_cfg["advanced_methods_enabled"] = enabled
+        wizard_cfg["advanced_params"] = {key: self._params_for_method(key) for key in enabled}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 6 — Export & Reporting
@@ -1004,6 +1187,14 @@ class ExportPage(_BaseStepPage):
             ]
         )
         return w
+
+    def sync_to_config(self, cfg: Any) -> None:
+        enabled = self._enabled_toggle_keys()
+        cfg.export_mode.export_csv = "csv" in enabled
+
+        wizard_cfg = cfg._extra.setdefault("wizard", {})
+        wizard_cfg["export_methods_enabled"] = enabled
+        wizard_cfg["export_params"] = self._params_for_method("export")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1244,14 +1435,12 @@ class PrismaWizard(QMainWindow):
         Args:
             cfg: PipelineConfig à remplir avec les paramètres des pages.
         """
-        # TODO: Implémenter la synchronisation des pages
-        # for page in self._pages:
-        #     if hasattr(page, 'sync_to_config'):
-        #         try:
-        #             page.sync_to_config(cfg)
-        #         except Exception as e:
-        #             log.warning("[wizard] Erreur sync page: %s", e)
-        pass
+        for page in self._pages:
+            if hasattr(page, "sync_to_config"):
+                try:
+                    page.sync_to_config(cfg)
+                except Exception as exc:
+                    log.warning("[wizard] Erreur sync page %s: %s", type(page).__name__, exc)
 
     def _on_run(self) -> None:
         from gui.workers import PipelineWorker
@@ -1284,6 +1473,10 @@ class PrismaWizard(QMainWindow):
             # ✅ CORRECTION 2 : Synchroniser les paramètres depuis les pages formulaires
             # Chaque page devrait implémenter sync_to_config(cfg) pour remplir ses paramètres
             self._sync_pages_to_config(cfg)
+            self.log_output.append_log(
+                "[INFO] Config RUO: QC=%s | DimRed=%s | Clustering=%s"
+                % (cfg.qc_method, cfg.dimred_method, cfg.clustering_method)
+            )
 
         except Exception as exc:
             self.log_output.append_log(f"[ERROR] Config: {exc}")

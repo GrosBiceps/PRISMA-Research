@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from prisma.core.registry import StrategyRegistry
+from prisma.core.gpu_context import GPUContext
 from prisma.strategies.base import DimReducParams
 
 logger = logging.getLogger(__name__)
@@ -91,8 +92,10 @@ class TSNEStrategy:
         )
 
         # GPU cuML : pas de limite max_events, pas de subsample
-        if _CUML_AVAILABLE and cuTSNE is not None:
+        if _CUML_AVAILABLE and cuTSNE is not None and GPUContext.use_gpu():
             return self._run_cuml(data, tsne_params)
+        if _CUML_AVAILABLE and not GPUContext.use_gpu():
+            logger.info("[t-SNE] Exécution forcée sur CPU (Version de référence) demandée par l'utilisateur.")
 
         # CPU : sous-échantillonnage si nécessaire
         x, subsample_idx = self._maybe_subsample(data, tsne_params)

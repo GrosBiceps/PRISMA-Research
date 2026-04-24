@@ -23,6 +23,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from prisma.core.registry import StrategyRegistry
+from prisma.core.gpu_context import GPUContext
 from prisma.strategies.base import ClusterParams
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,11 @@ class PhenoGraphStrategy:
             data.shape[0], data.shape[1], k,
         )
 
-        if _GPU_FULL_AVAILABLE:
+        if _GPU_FULL_AVAILABLE and not GPUContext.use_gpu():
+            logger.info(
+                "[PhenoGraph] Exécution forcée sur CPU (Version de référence) demandée par l'utilisateur."
+            )
+        elif _GPU_FULL_AVAILABLE:
             try:
                 return self._run_gpu(data, k, seed)
             except Exception as exc:
