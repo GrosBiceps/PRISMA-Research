@@ -26,11 +26,17 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QFileDialog,
     QGroupBox,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QToolButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -135,6 +141,293 @@ _OVERLAY_COLORS = [
 
 
 # ---------------------------------------------------------------------------
+# PlotWidgetPanel — panneau autonome (canvas + axes propres + label source)
+# ---------------------------------------------------------------------------
+
+
+class PlotWidgetPanel(QFrame):
+    """
+    Panneau de visualisation autonome pour le Worksheet multi-plot.
+
+    Contient :
+      - un InteractiveGatingCanvas propre
+      - ses propres QComboBox X et Y
+      - un QLabel indiquant la population source
+      - un bouton de fermeture
+
+    Signaux
+    -------
+    gateCreated(gate_name)  — émis après création d'une gate dans ce panneau.
+    closeRequested()        — l'utilisateur clique le bouton ×.
+    """
+
+    gateCreated = pyqtSignal(str)
+    closeRequested = pyqtSignal()
+
+    def __init__(
+        self,
+        engine: "PrismaFlowEngine",
+        gate_node: Tuple[str, ...],
+        channel_mapping: Dict[str, str],
+        active_transform_id: Optional[str] = None,
+        active_comp_id: Optional[str] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._engine = engine
+        self._gate_node = gate_node
+        self._active_transform_id = active_transform_id
+        self._active_comp_id = active_comp_id
+        self._channel_mapping = channel_mapping  # {pnn: marker}
+
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setMinimumSize(320, 280)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self._build_ui()
+        self._connect_signals()
+
+    # ------ Construction UI -----------------------------------------------
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(3)
+
+        # Barre titre : label source + bouton ×
+        title_row = QHBoxLayout()
+        pop_label = str(self._gate_node[0]) if self._gate_node else "Root"
+        self._lbl_source = QLabel(f"Population : {pop_label}")
+        self._lbl_source.setStyleSheet("color: #5BAAFF; font-size: 10px; font-weight: bold;")
+        title_row.addWidget(self._lbl_source)
+        title_row.addStretch()
+
+        self._btn_close = QToolButton()
+        self._btn_close.setText("×")
+        self._btn_close.setFixedSize(18, 18)
+        self._btn_close.setStyleSheet(
+            "QToolButton { color: #FF3D6E; border: none; font-weight: bold; }"
+            "QToolButton:hover { background: #1E2B3E; }"
+        )
+        title_row.addWidget(self._btn_close)
+        layout.addLayout(title_row)
+
+        # Combos X / Y
+        axes_row = QHBoxLayout()
+        axes_row.addWidget(QLabel("X:"))
+        self._combo_x = QComboBox()
+        self._combo_x.setMaximumWidth(130)
+        axes_row.addWidget(self._combo_x)
+        axes_row.addWidget(QLabel("Y:"))
+        self._combo_y = QComboBox()
+        self._combo_y.setMaximumWidth(130)
+        axes_row.addWidget(self._combo_y)
+        axes_row.addStretch()
+        layout.addLayout(axes_row)
+
+        # Combo transformation propre à ce panel
+        xform_row = QHBoxLayout()
+        xform_row.addWidget(QLabel("Transform:"))
+        self._combo_transform = QComboBox()
+        self._combo_transform.addItems(["Logicle", "Hyperlog", "Asinh", "Log", "Linear"])
+        self._combo_transform.setCurrentText("Logicle")
+        self._combo_transform.setMaximumWidth(110)
+        xform_row.addWidget(self._combo_transform)
+        xform_row.addStretch()
+        layout.addLayout(xform_row)
+
+        # Canvas
+        if _INTERACTIVE_CANVAS_AVAILABLE:
+            self._canvas = InteractiveGatingCanvas(self)
+        else:
+            self._canvas = InteractiveGatingCanvas(self)  # fallback stub
+        layout.addWidget(self._canvas)
+
+        # Remplir les combos
+        self._combo_y.addItem("", userData="")
+        for pnn, marker in self._channel_mapping.items():
+            display = f"{marker} ({pnn})" if marker and marker != pnn else pnn
+            self._combo_x.addItem(display, userData=pnn)
+            self._combo_y.addItem(display, userData=pnn)
+
+    def _connect_signals(self) -> None:
+        self._btn_close.clicked.connect(self.closeRequested)
+        self._combo_x.currentIndexChanged.connect(self._refresh)
+        self._combo_y.currentIndexChanged.connect(self._refresh)
+        self._combo_transform.currentTextChanged.connect(self._on_transform_changed)
+        self._canvas.polygonGateCompleted.connect(self._on_gate_signal)
+        self._canvas.rectangleGateCompleted.connect(self._on_gate_signal_rect)
+        self._canvas.quadrantGateCompleted.connect(self._on_gate_signal_quad)
+
+    # ------ Transformation locale ----------------------------------------
+
+    def _on_transform_changed(self, transform_type: str) -> None:
+        if not transform_type:
+            return
+        try:
+            self._active_transform_id = self._engine.apply_transformation(transform_type)
+        except Exception as exc:
+            _logger.warning("PlotWidgetPanel transform: %s", exc)
+        self._refresh()
+
+    # ------ Refresh -------------------------------------------------------
+
+    def _get_axis(self, combo: QComboBox) -> str:
+        data = combo.currentData()
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        text = combo.currentText().strip()
+        if text.endswith(")") and "(" in text:
+            return text[text.rfind("(") + 1 : -1].strip()
+        return text
+
+    def _refresh(self) -> None:
+        x_ch = self._get_axis(self._combo_x)
+        y_ch = self._get_axis(self._combo_y)
+        if not x_ch:
+            return
+        try:
+            df = self._engine.get_population_df(
+                self._gate_node,
+                transform_id=self._active_transform_id,
+                comp_matrix_id=self._active_comp_id,
+            )
+        except Exception as exc:
+            _logger.warning("PlotWidgetPanel._refresh: %s", exc)
+            return
+        if df is None or df.empty:
+            return
+
+        ch_map = self._channel_mapping
+        x_label = ch_map.get(x_ch, x_ch)
+        y_label = ch_map.get(y_ch, y_ch) if y_ch else ""
+        if hasattr(self._canvas, "set_axis_labels"):
+            self._canvas.set_axis_labels(x_label, y_label)
+
+        if y_ch and y_ch in df.columns:
+            self._canvas.set_data_2d(df, x_ch, y_ch)
+        elif x_ch in df.columns:
+            self._canvas.set_data_1d(df, x_ch)
+
+    def refresh_from_engine(
+        self,
+        engine: "PrismaFlowEngine",
+        transform_id: Optional[str] = None,
+        comp_id: Optional[str] = None,
+    ) -> None:
+        """Recharge les données depuis le moteur mis à jour (ex: après nouvelle gate)."""
+        self._engine = engine
+        if transform_id is not None:
+            self._active_transform_id = transform_id
+        if comp_id is not None:
+            self._active_comp_id = comp_id
+        self._refresh()
+        if hasattr(self._canvas, "reload_gate_overlays_from_engine"):
+            self._canvas.reload_gate_overlays_from_engine(engine)
+
+    # ------ Slots gates ---------------------------------------------------
+
+    def _on_gate_signal(self, gate_name: str, *_args) -> None:
+        self.gateCreated.emit(gate_name)
+
+    def _on_gate_signal_rect(self, gate_name: str, *_args) -> None:
+        self.gateCreated.emit(gate_name)
+
+    def _on_gate_signal_quad(self, gate_name: str, *_args) -> None:
+        self.gateCreated.emit(gate_name)
+
+    # ------ Propriété canvas public (compatibilité workspace) -------------
+
+    @property
+    def canvas(self) -> InteractiveGatingCanvas:
+        return self._canvas
+
+
+# ---------------------------------------------------------------------------
+# WorksheetArea — zone scrollable de grille de PlotWidgetPanel
+# ---------------------------------------------------------------------------
+
+
+class WorksheetArea(QScrollArea):
+    """
+    Zone multi-plot Kaluza-style : grille scrollable de PlotWidgetPanel.
+
+    Chaque panneau est autonome (axes, population source).
+    Le workspace peut ajouter/supprimer des panneaux dynamiquement.
+
+    Signal
+    ------
+    gateCreated(gate_name) — propagé depuis n'importe quel panneau.
+    """
+
+    gateCreated = pyqtSignal(str)
+
+    _COLS: int = 2  # nombre de colonnes par défaut
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        self._container = QWidget()
+        self._grid = QGridLayout(self._container)
+        self._grid.setContentsMargins(4, 4, 4, 4)
+        self._grid.setSpacing(6)
+        self.setWidget(self._container)
+
+        self._panels: List[PlotWidgetPanel] = []
+
+    # ------ API publique --------------------------------------------------
+
+    def add_panel(self, panel: PlotWidgetPanel) -> None:
+        """Ajoute un panneau dans la grille (gauche → droite, haut → bas)."""
+        idx = len(self._panels)
+        row, col = divmod(idx, self._COLS)
+        self._grid.addWidget(panel, row, col)
+        self._panels.append(panel)
+        panel.closeRequested.connect(lambda p=panel: self.remove_panel(p))
+        panel.gateCreated.connect(self.gateCreated)
+
+    def remove_panel(self, panel: PlotWidgetPanel) -> None:
+        """Retire un panneau et réorganise la grille."""
+        if panel not in self._panels:
+            return
+        self._panels.remove(panel)
+        self._grid.removeWidget(panel)
+        panel.deleteLater()
+        self._relayout()
+
+    def panels(self) -> List[PlotWidgetPanel]:
+        return list(self._panels)
+
+    def active_canvas(self) -> Optional[InteractiveGatingCanvas]:
+        """Retourne le canvas du premier panneau (compatibilité avec l'API workspace)."""
+        return self._panels[0].canvas if self._panels else None
+
+    def refresh_all(
+        self,
+        engine: "PrismaFlowEngine",
+        transform_id: Optional[str] = None,
+        comp_id: Optional[str] = None,
+    ) -> None:
+        """Recharge tous les panneaux après modification des données/gates."""
+        for panel in self._panels:
+            try:
+                panel.refresh_from_engine(engine, transform_id=transform_id, comp_id=comp_id)
+            except Exception as exc:
+                _logger.debug("WorksheetArea.refresh_all panel ignoré: %s", exc)
+
+    # ------ Interne -------------------------------------------------------
+
+    def _relayout(self) -> None:
+        """Réorganise les panneaux restants dans la grille après suppression."""
+        for i, panel in enumerate(self._panels):
+            row, col = divmod(i, self._COLS)
+            self._grid.addWidget(panel, row, col)
+
+
+# ---------------------------------------------------------------------------
 # Widget principal
 # ---------------------------------------------------------------------------
 
@@ -183,15 +476,14 @@ class PrismaGatingWorkspace(QWidget):
 
         splitter = QSplitter(Qt.Horizontal, self)
         splitter.setHandleWidth(4)
-        root_layout.addWidget(splitter)
 
         # ── Panneau gauche : arbre de gating ────────────────────────────
         self._tree_panel = self._build_tree_panel()
         splitter.addWidget(self._tree_panel)
 
-        # ── Panneau central : canvas ─────────────────────────────────────
-        self._canvas = InteractiveGatingCanvas(self)
-        splitter.addWidget(self._canvas)
+        # ── Panneau central : Worksheet multi-plot ───────────────────────
+        self._worksheet = WorksheetArea(self)
+        splitter.addWidget(self._worksheet)
 
         # ── Panneau droit : contrôles ────────────────────────────────────
         self._ctrl_panel = self._build_control_panel()
@@ -202,7 +494,111 @@ class PrismaGatingWorkspace(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
 
+        root_layout.addWidget(splitter)
+
+        # ── Tableau statistiques live (Kaluza-style) ────────────────────
+        self._stats_table = self._build_stats_table()
+        root_layout.addWidget(self._stats_table)
+
         self._apply_style()
+
+    def _build_stats_table(self) -> QTableWidget:
+        cols = ["Population", "Count", "% Parent", "% Total", "MFI X", "MFI Y"]
+        table = QTableWidget(0, len(cols))
+        table.setHorizontalHeaderLabels(cols)
+        table.setMaximumHeight(160)
+        table.setAlternatingRowColors(True)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for col in range(1, len(cols)):
+            table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        table.setStyleSheet(
+            "QTableWidget { background: #04070D; color: #EEF2F7; border: none; font-size: 10px; }"
+            "QHeaderView::section { background: #0C1220; color: #5BAAFF; border: none; padding: 2px 6px; }"
+            "QTableWidget::item:alternate { background: #080D18; }"
+        )
+        return table
+
+    def _update_statistics(self) -> None:
+        """Remplit le QTableWidget avec les stats FlowKit de toutes les gates du sample actif."""
+        try:
+            sample_id = self._current_sample_id()
+            if not sample_id:
+                return
+
+            x_ch = self._selected_axis_channel(self._combo_x)
+            y_ch = self._selected_axis_channel(self._combo_y)
+
+            gate_ids = self._engine.get_gate_ids()
+            if not gate_ids:
+                self._stats_table.setRowCount(0)
+                return
+
+            # Tenter get_analysis_report (FlowKit ≥ 1.0)
+            report_df: Optional[pd.DataFrame] = None
+            try:
+                report_df = self._engine.session.get_analysis_report(sample_id=sample_id)
+            except Exception:
+                pass
+
+            rows = []
+            for gid in gate_ids:
+                count = 0
+                pct_parent = 0.0
+                pct_total = 0.0
+                mfi_x = ""
+                mfi_y = ""
+
+                try:
+                    if report_df is not None and not report_df.empty:
+                        row = report_df[report_df["gate_name"] == gid]
+                        if not row.empty:
+                            count = int(row["count"].iloc[0]) if "count" in row.columns else 0
+                            pct_parent = float(row["percent_of_parent"].iloc[0]) if "percent_of_parent" in row.columns else 0.0
+                            pct_total = float(row["percent_of_total"].iloc[0]) if "percent_of_total" in row.columns else 0.0
+                    else:
+                        # Fallback manuel : DataFrame de la population
+                        paths = self._engine.find_gate_paths(gid)
+                        gate_path = paths[0] if paths else None
+                        gdf = self._engine.get_gate_dataframe(gid, gate_path=gate_path, sample_id=sample_id)
+                        if gdf is not None:
+                            count = len(gdf)
+                            try:
+                                total_df = self._engine.get_population_df(("root",), sample_id=sample_id)
+                                total = len(total_df) if total_df is not None else 0
+                                pct_total = round(100.0 * count / total, 2) if total > 0 else 0.0
+                            except Exception:
+                                pass
+                except Exception as exc:
+                    _logger.debug("Stats gate '%s' ignorée : %s", gid, exc)
+
+                try:
+                    paths = self._engine.find_gate_paths(gid)
+                    gate_path = paths[0] if paths else None
+                    gdf = self._engine.get_gate_dataframe(gid, gate_path=gate_path, sample_id=sample_id,
+                                                          transform_id=self._active_transform_id)
+                    if gdf is not None and not gdf.empty:
+                        if x_ch and x_ch in gdf.columns:
+                            mfi_x = f"{float(gdf[x_ch].median()):.1f}"
+                        if y_ch and y_ch in gdf.columns:
+                            mfi_y = f"{float(gdf[y_ch].median()):.1f}"
+                        if count == 0:
+                            count = len(gdf)
+                except Exception:
+                    pass
+
+                rows.append((gid, count, f"{pct_parent:.1f}", f"{pct_total:.1f}", mfi_x, mfi_y))
+
+            self._stats_table.setRowCount(len(rows))
+            for r, (pop, cnt, pp, pt, mx, my) in enumerate(rows):
+                for c, val in enumerate([pop, str(cnt), pp, pt, mx, my]):
+                    item = QTableWidgetItem(str(val))
+                    item.setTextAlignment(Qt.AlignCenter)
+                    self._stats_table.setItem(r, c, item)
+
+        except Exception as exc:
+            _logger.warning("_update_statistics échoué : %s", exc)
 
     def _apply_style(self) -> None:
         self.setStyleSheet("""
@@ -361,6 +757,7 @@ class PrismaGatingWorkspace(QWidget):
         grp_act = QGroupBox("Actions")
         vact = QVBoxLayout(grp_act)
 
+        self._btn_add_panel = QPushButton("＋  Nouveau panneau (population active)")
         self._btn_apply = QPushButton("▶  Afficher")
         self._btn_delete_gate = QPushButton("🗑  Supprimer gate sélectionnée")
         self._btn_analyze = QPushButton("⚡  Analyser tous les samples")
@@ -370,6 +767,7 @@ class PrismaGatingWorkspace(QWidget):
         self._btn_load_workspace = QPushButton("📂  Charger contexte gating")
 
         for btn in [
+            self._btn_add_panel,
             self._btn_apply,
             self._btn_delete_gate,
             self._btn_analyze,
@@ -390,10 +788,8 @@ class PrismaGatingWorkspace(QWidget):
     # ------------------------------------------------------------------
 
     def _connect_signals(self) -> None:
-        # Canvas → engine
-        self._canvas.polygonGateCompleted.connect(self._on_polygon_gate)
-        self._canvas.rectangleGateCompleted.connect(self._on_rectangle_gate)
-        self._canvas.quadrantGateCompleted.connect(self._on_quadrant_gate)
+        # Worksheet → arbre (gate créée dans n'importe quel panneau → refresh global)
+        self._worksheet.gateCreated.connect(self._on_worksheet_gate_created)
 
         # Arbre → affichage
         self._tree_view.clicked.connect(self._on_tree_node_clicked)
@@ -407,13 +803,14 @@ class PrismaGatingWorkspace(QWidget):
         self._combo_transform.currentTextChanged.connect(self._on_transform_changed)
         self._combo_comp.currentIndexChanged.connect(self._refresh_canvas)
         self._chk_enable_comp.toggled.connect(self._on_compensation_toggled)
+        self._btn_add_panel.clicked.connect(self._on_add_panel)
         self._btn_apply.clicked.connect(self._refresh_canvas)
 
         # Boutons dessin
         self._btn_poly.clicked.connect(lambda: self._activate_draw(DrawMode.POLYGON))
         self._btn_rect.clicked.connect(lambda: self._activate_draw(DrawMode.RECTANGLE))
         self._btn_quad.clicked.connect(lambda: self._activate_draw(DrawMode.QUADRANT))
-        self._btn_cancel_draw.clicked.connect(self._canvas.cancel_drawing)
+        self._btn_cancel_draw.clicked.connect(self._safe_cancel_drawing)
         self._btn_cancel_draw.clicked.connect(self._reset_draw_buttons)
 
         # Actions
@@ -495,6 +892,24 @@ class PrismaGatingWorkspace(QWidget):
 
             self._reload_sample_combo()
             self._reload_channel_combos()
+
+            # Créer un panneau initial dans le Worksheet si aucun n'existe encore
+            if not self._worksheet.panels():
+                try:
+                    mapping = self._engine.get_channel_marker_mapping(sample_id=sample_id)
+                except Exception:
+                    mapping = {}
+                initial_panel = PlotWidgetPanel(
+                    engine=self._engine,
+                    gate_node=("root",),
+                    channel_mapping=mapping,
+                    active_transform_id=self._active_transform_id,
+                )
+                initial_panel.canvas.polygonGateCompleted.connect(self._on_polygon_gate)
+                initial_panel.canvas.rectangleGateCompleted.connect(self._on_rectangle_gate)
+                initial_panel.canvas.quadrantGateCompleted.connect(self._on_quadrant_gate)
+                initial_panel.canvas.gateModified.connect(self._on_gate_modified)
+                self._worksheet.add_panel(initial_panel)
 
             # Forcer l'affichage de la population racine puis demander le tracé.
             self._combo_population.setCurrentIndex(0)
@@ -751,6 +1166,8 @@ class PrismaGatingWorkspace(QWidget):
           3. La gate _current_gate_node n'est jamais réinitialisée ici — persistance garantie
           4. Envoie au canvas avec labels PnS corrects sur les axes
         """
+        if not self._has_active_panel():
+            return
         x_ch = self._selected_axis_channel(self._combo_x)
         y_ch = self._selected_axis_channel(self._combo_y)
         sample_id = self._current_sample_id()
@@ -850,6 +1267,9 @@ class PrismaGatingWorkspace(QWidget):
 
         # --- Overlays gates existantes ---
         self._canvas.reload_gate_overlays_from_engine(self._engine)
+
+        # --- Statistiques live ---
+        self._update_statistics()
 
     def _show_overlay_children(
         self,
@@ -1075,6 +1495,68 @@ class PrismaGatingWorkspace(QWidget):
         finally:
             self._reset_draw_buttons()
 
+    def _on_gate_modified(
+        self,
+        gate_id: str,
+        x_channel: str,
+        y_channel: str,
+        new_vertices: list,
+    ) -> None:
+        """
+        Slot : gate déplacée/redimensionnée par drag & drop sur le canvas.
+        Stratégie : supprimer l'ancienne gate et recréer avec les nouvelles coordonnées.
+        """
+        if not gate_id or not new_vertices:
+            return
+        try:
+            paths = self._engine.find_gate_paths(gate_id)
+            gate_path = paths[0] if paths else None
+            self._engine.remove_gate(gate_id, gate_path=gate_path)
+            xform_ref = self._selected_transform()
+            self._engine.create_polygon_gate_from_vertices(
+                gate_name=gate_id,
+                gate_path=gate_path,
+                x_channel=x_channel,
+                y_channel=y_channel,
+                vertices=new_vertices,
+                transform_ref=xform_ref,
+            )
+            self._post_gate_created(new_gate_name=gate_id)
+        except Exception as exc:
+            _logger.warning("_on_gate_modified: %s", exc)
+
+    def _on_add_panel(self) -> None:
+        """Ajoute un nouveau PlotWidgetPanel dans le Worksheet pour la population active."""
+        try:
+            mapping = self._engine.get_channel_marker_mapping(
+                sample_id=self._current_sample_id()
+            )
+        except Exception:
+            mapping = {}
+        panel = PlotWidgetPanel(
+            engine=self._engine,
+            gate_node=self._current_gate_node,
+            channel_mapping=mapping,
+            active_transform_id=self._active_transform_id,
+            active_comp_id=self._selected_comp(),
+        )
+        # Connecter aussi les signaux de gate du panneau vers les handlers workspace
+        panel.canvas.polygonGateCompleted.connect(self._on_polygon_gate)
+        panel.canvas.rectangleGateCompleted.connect(self._on_rectangle_gate)
+        panel.canvas.quadrantGateCompleted.connect(self._on_quadrant_gate)
+        panel.canvas.gateModified.connect(self._on_gate_modified)
+        self._worksheet.add_panel(panel)
+        panel._refresh()
+
+    def _on_worksheet_gate_created(self, gate_name: str) -> None:
+        """Slot : gate créée dans n'importe quel panneau → rebuild arbre + refresh tous panneaux."""
+        self._refresh_tree()
+        self._worksheet.refresh_all(
+            self._engine,
+            transform_id=self._active_transform_id,
+            comp_id=self._selected_comp() if self._chk_enable_comp.isChecked() else None,
+        )
+
     def _post_gate_created(self, new_gate_name: Optional[str] = None) -> None:
         """
         Actions après création d'une gate :
@@ -1083,6 +1565,7 @@ class PrismaGatingWorkspace(QWidget):
           3. Refresh canvas sur la gate parente (contexte courant conservé)
         """
         self._refresh_tree()
+        self._update_statistics()
         # Sélectionner la gate nouvellement créée dans l'arbre et dans le combo population
         if new_gate_name:
             idx = self._combo_population.findText(new_gate_name)
@@ -1125,7 +1608,8 @@ class PrismaGatingWorkspace(QWidget):
             gate_path = paths[0] if paths else None
             self._engine.remove_gate(node.gate_id, gate_path=gate_path)
             self._refresh_tree()
-            self._canvas.remove_gate_overlay(node.gate_id)
+            if self._has_active_panel():
+                self._canvas.remove_gate_overlay(node.gate_id)
         except PrismaEngineError as exc:
             self._show_error(str(exc))
 
@@ -1234,18 +1718,34 @@ class PrismaGatingWorkspace(QWidget):
     # ------------------------------------------------------------------
 
     def _activate_draw(self, mode: DrawMode) -> None:
-        x_ch = self._combo_x.currentText().strip()
-        y_ch = self._combo_y.currentText().strip()
+        if not self._has_active_panel():
+            self._show_error("Chargez un FCS avant de dessiner.")
+            self._reset_draw_buttons()
+            return
+
+        # Lire les canaux depuis le canvas actif (pas les combos globaux)
+        # pour supporter les panels multi-graphiques avec axes indépendants
+        canvas = self._canvas
+        x_ch = getattr(canvas, "_x_channel", "").strip()
+        y_ch = getattr(canvas, "_y_channel", "").strip()
+
+        # Fallback sur les combos globaux si canvas pas encore peuplé
+        if not x_ch:
+            x_ch = self._combo_x.currentText().strip()
+        if not y_ch:
+            y_ch = self._combo_y.currentText().strip()
 
         if not x_ch:
             self._show_error("Sélectionnez un canal X avant de dessiner.")
             self._reset_draw_buttons()
             return
 
-        if mode in (DrawMode.POLYGON, DrawMode.RECTANGLE, DrawMode.QUADRANT) and not y_ch:
+        # Mode 2D nécessite Y — mais POLYGON/RECTANGLE/QUADRANT sur histo 1D
+        # sont simplement ignorés (le canvas gère déjà le cas y_channel vide)
+        if mode in (DrawMode.POLYGON, DrawMode.QUADRANT) and not y_ch:
             self._show_error(
-                "Un canal Y est requis pour dessiner une gate 2D.\n"
-                "Pour une gate 1D, utilisez une RectangleGate avec Y vide."
+                "Un canal Y est requis pour une gate Polygone ou Quadrant.\n"
+                "Pour une gate 1D sur histogramme, utilisez Rectangle."
             )
             self._reset_draw_buttons()
             return
@@ -1258,6 +1758,12 @@ class PrismaGatingWorkspace(QWidget):
             (self._btn_quad, DrawMode.QUADRANT),
         ]:
             btn.setChecked(m == mode)
+
+    def _safe_cancel_drawing(self) -> None:
+        try:
+            self._canvas.cancel_drawing()
+        except RuntimeError:
+            pass
 
     def _reset_draw_buttons(self) -> None:
         for btn in (self._btn_poly, self._btn_rect, self._btn_quad):
@@ -1350,6 +1856,21 @@ class PrismaGatingWorkspace(QWidget):
     def engine(self) -> PrismaFlowEngine:
         """Accès explicite au moteur pour les intégrations externes."""
         return self._engine
+
+    @property
+    def _canvas(self) -> InteractiveGatingCanvas:
+        """Canvas du premier panneau actif — compatibilité rétrograde.
+
+        Lève RuntimeError si aucun panneau n'existe encore
+        (avant le premier load_sample).
+        """
+        c = self._worksheet.active_canvas()
+        if c is None:
+            raise RuntimeError("WorksheetArea : aucun panneau actif")
+        return c
+
+    def _has_active_panel(self) -> bool:
+        return bool(self._worksheet.panels())
 
     def closeEvent(self, event: object) -> None:
         """Émet le dernier contexte sauvegardé à la fermeture validée du workspace."""

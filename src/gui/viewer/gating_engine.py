@@ -1568,6 +1568,120 @@ class PrismaFlowEngine:
 
         return full_df
 
+    def get_colored_population(
+        self,
+        parent_gate_node: Tuple[str, ...],
+        x_pnn: str,
+        y_pnn: Optional[str] = None,
+        sample_id: Optional[str] = None,
+        transform_id: Optional[str] = None,
+        comp_matrix_id: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        Retourne le DataFrame de la population parente avec colonne 'Population_Color'.
+
+        Chaque cellule reçoit la couleur HEX de sa population enfant la plus proche.
+        Les cellules n'appartenant à aucun enfant reçoivent '#506070' (gris-bleu).
+
+        Args:
+            parent_gate_node: Tuple de chemin vers la gate parente (ex: ('Leuco',)).
+            x_pnn:            Canal X (Pnn).
+            y_pnn:            Canal Y (Pnn) — None OK.
+            sample_id:        Sample actif si None.
+            transform_id:     ID de transformation.
+            comp_matrix_id:   ID de matrice de compensation.
+
+        Returns:
+            DataFrame avec colonne 'Population_Color' (str HEX).
+        """
+        _CHILD_COLORS = [
+            "#5BAAFF", "#39FF8A", "#FF9B3D", "#FF3D6E",
+            "#FFE032", "#7B52FF", "#7EC8E3", "#FF6BFF",
+        ]
+        _DEFAULT_COLOR = "#506070"
+
+        sid = sample_id or self._require_active_sample()
+        parent_df = self.get_population_df(
+            parent_gate_node,
+            sample_id=sid,
+            transform_id=transform_id,
+            comp_matrix_id=comp_matrix_id,
+        )
+
+        if parent_df.empty:
+            return parent_df
+
+        # Récupérer les enfants directs
+        parent_name = str(parent_gate_node[0]) if parent_gate_node else None
+        parent_path: Optional[Tuple[str, ...]] = (
+            tuple(parent_gate_node[1:]) if len(parent_gate_node) > 1 else None
+        )
+        children: List[str] = []
+        if parent_name and parent_name.lower() != "root":
+            try:
+                children = list(self._backend.get_child_gate_ids(
+                    parent_name, gate_path=parent_path
+                ))
+            except Exception as exc:
+                _logger.debug("get_colored_population: get_child_gate_ids échoué: %s", exc)
+
+        # Construire le masque global pour retrouver les lignes du parent dans le df complet
+        full_df = self._build_comp_xform_df(sid, transform_id, comp_matrix_id)
+        if full_df.empty or full_df.shape[0] == 0:
+            parent_df["Population_Color"] = _DEFAULT_COLOR
+            return parent_df
+
+        # Obtenir le masque du parent dans full_df
+        if parent_name and parent_name.lower() != "root":
+            try:
+                parent_mask_full = np.asarray(
+                    self._backend.get_gate_membership(sid, parent_name, gate_path=parent_path),
+                    dtype=bool,
+                ).flatten()
+                if parent_mask_full.shape[0] != full_df.shape[0]:
+                    parent_mask_full = np.ones(full_df.shape[0], dtype=bool)
+            except Exception:
+                parent_mask_full = np.ones(full_df.shape[0], dtype=bool)
+        else:
+            parent_mask_full = np.ones(full_df.shape[0], dtype=bool)
+
+        # Tableau de couleurs indexé sur les lignes du parent_df
+        n_parent = parent_mask_full.sum()
+        colors = np.full(n_parent, _DEFAULT_COLOR, dtype=object)
+
+        if children:
+            # analyze_samples auto si nécessaire
+            try:
+                self._backend.get_gate_membership(sid, children[0])
+            except KeyError:
+                try:
+                    self._backend.analyze_samples(sample_id=sid, verbose=False)
+                except Exception as exc_a:
+                    _logger.warning("get_colored_population: analyze auto échoué: %s", exc_a)
+
+            parent_indices = np.where(parent_mask_full)[0]
+
+            for i, child_name in enumerate(children):
+                color = _CHILD_COLORS[i % len(_CHILD_COLORS)]
+                try:
+                    child_paths = self.find_gate_paths(child_name)
+                    child_path = child_paths[0] if child_paths else None
+                    child_mask_full = np.asarray(
+                        self._backend.get_gate_membership(sid, child_name, gate_path=child_path),
+                        dtype=bool,
+                    ).flatten()
+                    if child_mask_full.shape[0] != full_df.shape[0]:
+                        continue
+                    # Indices dans parent_df (position relative au sous-ensemble parent)
+                    child_in_parent = child_mask_full[parent_indices]
+                    colors[child_in_parent] = color
+                except Exception as exc:
+                    _logger.debug("get_colored_population: child '%s' ignoré: %s", child_name, exc)
+
+        parent_df = parent_df.copy()
+        parent_df["Population_Color"] = colors
+        return parent_df
+
     def _build_comp_xform_df(
         self,
         sid: str,
@@ -1916,6 +2030,67 @@ class PrismaFlowEngine:
             transform_ref=transform_ref,
             sample_id=sample_id,
         )
+
+    def create_boolean_gate(
+        self,
+        gate_name: str,
+        parent_path: Tuple[str, ...],
+        boolean_type: str,
+        ref_gates: List[str],
+    ) -> None:
+        """
+        Crée une BooleanGate FlowKit combinant des gates existantes.
+
+        Args:
+            gate_name:    Identifiant unique de la gate.
+            parent_path:  Chemin de la gate parente (tuple, ex: ("root",)).
+            boolean_type: 'and' | 'or' | 'not'  (FlowKit BooleanGate literals).
+            ref_gates:    Liste de gate_name référencés (doivent exister dans la stratégie).
+
+        Raises:
+            PrismaEngineError: FlowKit absent, type invalide ou gate référencée manquante.
+            BooleanGateRefMissingError: Une ref_gate est introuvable.
+        """
+        if not FLOWKIT_AVAILABLE:
+            raise PrismaEngineError("FlowKit non disponible — impossible de créer une BooleanGate.")
+
+        bool_type_clean = boolean_type.strip().lower()
+        if bool_type_clean not in ("and", "or", "not"):
+            raise PrismaEngineError(
+                f"boolean_type invalide '{boolean_type}'. Valeurs acceptées : 'and', 'or', 'not'."
+            )
+
+        existing_ids = set(self.get_gate_ids())
+        missing = [g for g in ref_gates if g not in existing_ids]
+        if missing:
+            raise BooleanGateRefMissingError(
+                f"Gates référencées introuvables : {missing}. "
+                f"Gates disponibles : {sorted(existing_ids)}"
+            )
+
+        try:
+            # BooleanGate FlowKit : liste de GateReference (gate_name, gate_path)
+            gate_refs = []
+            for gid in ref_gates:
+                paths = self.find_gate_paths(gid)
+                gate_path = paths[0] if paths else None
+                gate_refs.append(fk_gates.GateReference(gid, gate_path=gate_path))
+
+            bool_gate = fk_gates.BooleanGate(
+                gate_name=gate_name,
+                bool_type=bool_type_clean,
+                ref_gates=gate_refs,
+            )
+            self._backend.add_gate(bool_gate, gate_path=parent_path)
+            _logger.info(
+                "BooleanGate '%s' (%s) créée avec refs=%s", gate_name, bool_type_clean, ref_gates
+            )
+        except (BooleanGateRefMissingError, PrismaEngineError):
+            raise
+        except Exception as exc:
+            raise PrismaEngineError(
+                f"Création BooleanGate '{gate_name}' échouée : {exc}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # K. Extensions PRISMA

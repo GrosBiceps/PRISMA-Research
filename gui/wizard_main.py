@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -1796,10 +1797,41 @@ QLabel#subtitleLabel {
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _install_global_exception_hook() -> None:
+    """Affiche toute exception non gérée dans stderr et une QMessageBox critique."""
+    previous_hook = sys.excepthook
+
+    def _qt_excepthook(exc_type, exc_value, exc_tb) -> None:
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+        log.exception("Exception non gérée dans l'UI", exc_info=(exc_type, exc_value, exc_tb))
+
+        details = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        try:
+            app = QApplication.instance()
+            parent = app.activeWindow() if app is not None else None
+            QMessageBox.critical(
+                parent,
+                "Erreur inattendue",
+                f"{exc_type.__name__}: {exc_value}\n\nVoir le terminal pour le traceback complet.",
+            )
+        except Exception:
+            pass
+
+        if callable(previous_hook):
+            try:
+                previous_hook(exc_type, exc_value, exc_tb)
+            except Exception:
+                pass
+
+    sys.excepthook = _qt_excepthook
+
+
 def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("PRISMA Research")
     app.setOrganizationName("PRISMA Cytometry")
+    # IMPORTANT: installer le hook global avant d'entrer dans la boucle Qt.
+    _install_global_exception_hook()
     win = PrismaWizard()
     win.show()
     sys.exit(app.exec_())
