@@ -56,7 +56,14 @@ try:
         _vram_total   = 0.0
         logger.info("[torch_utils] PyTorch disponible — CUDA absent, mode CPU uniquement")
 
-except ImportError:
+except (ImportError, OSError) as _torch_load_err:
+    # OSError/WinError 1114 : DLL CUDA non chargeable dans ce contexte
+    # (process spawné sans PATH CUDA, ou driver incompatible).
+    # Dégradation gracieuse vers mode CPU-only / sans torch.
+    logger.warning(
+        "[torch_utils] PyTorch indisponible (%s: %s) — mode sans GPU activé",
+        type(_torch_load_err).__name__, _torch_load_err,
+    )
     _torch        = None          # type: ignore[assignment]
     _TORCH_AVAILABLE = False
     _TORCH_CUDA   = False

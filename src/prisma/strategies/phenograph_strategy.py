@@ -54,7 +54,7 @@ try:
     _TORCH_CUDA = torch_cuda_available()
     if _TORCH_CUDA and not _GPU_FULL_AVAILABLE:
         logger.info("[PhenoGraph] PyTorch CUDA disponible — kNN GPU + Louvain CPU actif")
-except ImportError:
+except (ImportError, OSError):
     _TORCH_CUDA = False
 
 # ── Louvain/Leiden CPU via igraph (pour backend 2) ──────────────────────────

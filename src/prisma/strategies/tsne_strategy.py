@@ -43,7 +43,7 @@ try:
     _TORCH_CUDA = torch_cuda_available()
     if _TORCH_CUDA and not _CUML_AVAILABLE:
         logger.info("[t-SNE] PyTorch CUDA disponible — kNN affinités GPU actif")
-except ImportError:
+except (ImportError, OSError):
     _TORCH_CUDA = False
 
 # ── Backend 3 : openTSNE CPU multithread ────────────────────────────────────

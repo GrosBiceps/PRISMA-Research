@@ -40,8 +40,8 @@ _logger = get_logger("viewer.interactive_canvas")
 # Configuration rendu
 # ---------------------------------------------------------------------------
 
-MAX_SCATTER_PTS: int = 150_000   # Au-delà → sous-échantillonnage
-DENSITY_BINS: int = 80           # Résolution estimation densité KDE proxy
+MAX_SCATTER_PTS: int = 150_000  # Au-delà → sous-échantillonnage
+DENSITY_BINS: int = 80  # Résolution estimation densité KDE proxy
 _BG_COLOR = "#04070D"
 _GRID_COLOR = (40, 50, 70, 120)
 _POINT_COLOR = (80, 160, 255, 100)
@@ -94,6 +94,8 @@ class InteractiveGatingCanvas(pg.PlotWidget):
 
         self._x_channel: str = ""
         self._y_channel: str = ""
+        self._x_label: str = ""
+        self._y_label: str = ""
         self._mode: DrawMode = DrawMode.NAVIGATE
         self._next_gate_name: str = "Gate"
 
@@ -141,6 +143,15 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         self.getViewBox().scene().sigMouseMoved.connect(self._on_scene_move)
 
     # ------------------------------------------------------------------
+    # API publique — labels axes
+    # ------------------------------------------------------------------
+
+    def set_axis_labels(self, x_label: str, y_label: str) -> None:
+        """Définit les labels PnS (marqueurs) à afficher sur les axes."""
+        self._x_label = x_label
+        self._y_label = y_label
+
+    # ------------------------------------------------------------------
     # API publique — chargement données
     # ------------------------------------------------------------------
 
@@ -153,38 +164,73 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         gated_mask: Optional[np.ndarray] = None,
     ) -> None:
         """
-        Affiche un scatter 2D depuis un DataFrame.
+        Affiche un scatter 2D depuis un DataFrame compensé+transformé.
 
-        Args:
-            df:               DataFrame (N_cells × N_channels).
-            x_channel:        Colonne axe X.
-            y_channel:        Colonne axe Y.
-            density_coloring: Colorie selon la densité locale (proxy 2D KDE).
-            gated_mask:       Masque booléen pour surligner les événements gated.
+        Garanties PyQtGraph :
+          - arrays float32 1D obligatoirement via .flatten() (évite broadcast (N,1))
+          - NaN et Inf filtrés avant rendu (artefacts invisibles sinon)
+          - labels axes = PnS (marqueur) si set_axis_labels() appelé avant
         """
         if x_channel not in df.columns or y_channel not in df.columns:
-            _logger.error("Canaux absents : %s, %s", x_channel, y_channel)
+            _logger.error(
+                "set_data_2d: canaux absents x='%s' y='%s'. Disponibles: %s",
+                x_channel, y_channel, list(df.columns)[:10],
+            )
             return
 
         self._x_channel = x_channel
         self._y_channel = y_channel
         self.clear_data()
 
-        xd = df[x_channel].to_numpy(dtype=np.float32)
-        yd = df[y_channel].to_numpy(dtype=np.float32)
+        # --- Extraction 1D float32 + nettoyage NaN/Inf ---
+        xd = df[x_channel].to_numpy(dtype=np.float64).flatten()
+        yd = df[y_channel].to_numpy(dtype=np.float64).flatten()
 
-        # Sous-échantillonnage adaptatif
+        if xd.shape[0] != yd.shape[0]:
+            _logger.error(
+                "set_data_2d shape mismatch: x=%d y=%d", xd.shape[0], yd.shape[0]
+            )
+            return
+
+        # Masque valide : exclut NaN, Inf et valeurs aberrantes (>1e9 = artefact transform)
+        valid = np.isfinite(xd) & np.isfinite(yd) & (np.abs(xd) < 1e9) & (np.abs(yd) < 1e9)
+        if not valid.any():
+            _logger.warning("set_data_2d: aucune donnée valide après nettoyage NaN/Inf")
+            return
+
+        if not valid.all():
+            n_invalid = int((~valid).sum())
+            _logger.debug("set_data_2d: %d points invalides filtrés (NaN/Inf/aberrant)", n_invalid)
+            xd = xd[valid]
+            yd = yd[valid]
+            if gated_mask is not None:
+                gated_mask = np.asarray(gated_mask, dtype=bool).flatten()[valid]
+
+        # Conversion finale float32 pour PyQtGraph
+        xd = xd.astype(np.float32)
+        yd = yd.astype(np.float32)
+
+        if gated_mask is not None:
+            gated_mask = np.asarray(gated_mask, dtype=bool).flatten()
+            if gated_mask.shape[0] != xd.shape[0]:
+                _logger.warning("set_data_2d: gated_mask shape %d != data %d, ignoré",
+                                gated_mask.shape[0], xd.shape[0])
+                gated_mask = None
+
+        # --- Sous-échantillonnage adaptatif ---
         n = len(xd)
         if n > MAX_SCATTER_PTS:
             rng = np.random.default_rng(42)
             idx = rng.choice(n, MAX_SCATTER_PTS, replace=False)
-            xd, yd = xd[idx], yd[idx]
+            xd = xd[idx]
+            yd = yd[idx]
             if gated_mask is not None:
                 gated_mask = gated_mask[idx]
 
         self._xdata = xd
         self._ydata = yd
 
+        # --- Scatter principal ---
         if density_coloring:
             colors = self._compute_density_colors(xd, yd)
         else:
@@ -199,19 +245,26 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         )
         self.addItem(self._scatter)
 
-        # Overlay événements gated
+        # --- Overlay événements gated ---
         if gated_mask is not None and gated_mask.any():
             xg = xd[gated_mask]
             yg = yd[gated_mask]
             gated_scatter = pg.ScatterPlotItem(
-                x=xg, y=yg, size=3, pen=None,
+                x=xg,
+                y=yg,
+                size=3,
+                pen=None,
                 brush=pg.mkColor(_GATED_COLOR),
             )
             self.addItem(gated_scatter)
 
-        self.setLabel("bottom", x_channel)
-        self.setLabel("left", y_channel)
+        # --- Labels axes : PnS si disponible, sinon Pnn ---
+        self.getPlotItem().setLabel("bottom", self._x_label or x_channel)
+        self.getPlotItem().setLabel("left", self._y_label or y_channel)
         self.autoRange()
+        _logger.debug(
+            "set_data_2d: %d pts tracés (%s vs %s)", len(xd), x_channel, y_channel
+        )
 
     def set_data_1d(
         self,
@@ -228,15 +281,17 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             n_bins:  Nombre de bins.
         """
         if channel not in df.columns:
-            _logger.error("Canal absent : %s", channel)
+            _logger.error("set_data_1d: canal absent '%s'. Disponibles: %s",
+                          channel, list(df.columns)[:10])
             return
 
         self._x_channel = channel
         self._y_channel = ""
         self.clear_data()
 
-        xd = df[channel].to_numpy(dtype=np.float32)
-        xd = xd[np.isfinite(xd)]
+        xd = df[channel].to_numpy(dtype=np.float64).flatten()
+        xd = xd[np.isfinite(xd) & (np.abs(xd) < 1e9)]
+        xd = xd.astype(np.float32)
 
         counts, edges = np.histogram(xd, bins=n_bins)
         width = edges[1] - edges[0]
@@ -250,8 +305,8 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             pen=pg.mkPen(None),
         )
         self.addItem(self._hist_bars)
-        self.setLabel("bottom", channel)
-        self.setLabel("left", "Count")
+        self.getPlotItem().setLabel("bottom", self._x_label or channel)
+        self.getPlotItem().setLabel("left", "Count")
         self.autoRange()
 
     def set_data_overlay(
@@ -297,8 +352,11 @@ class InteractiveGatingCanvas(pg.PlotWidget):
                 color = pg.mkColor(color_hex)
                 color.setAlpha(140)
                 bars = pg.BarGraphItem(
-                    x=centers, height=counts, width=width * 0.9,
-                    brush=color, pen=pg.mkPen(None),
+                    x=centers,
+                    height=counts,
+                    width=width * 0.9,
+                    brush=color,
+                    pen=pg.mkPen(None),
                 )
                 self.addItem(bars)
 
@@ -423,7 +481,10 @@ class InteractiveGatingCanvas(pg.PlotWidget):
 
         _logger.info(
             "Gate 1D émise : '%s' canal=%s [%.4f, %.4f]",
-            gate_name, x_ch, x_min, x_max,
+            gate_name,
+            x_ch,
+            x_min,
+            x_max,
         )
 
         # Convention 1D : y_channel vide, y_min=y_max=0.0
@@ -462,7 +523,8 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         fill_color.setAlpha(25)
 
         item = pg.PlotDataItem(
-            x=xs, y=ys,
+            x=xs,
+            y=ys,
             pen=pen,
             fillLevel=None,
             fillBrush=pg.mkBrush(fill_color),
@@ -524,8 +586,7 @@ class InteractiveGatingCanvas(pg.PlotWidget):
                         x_max = dims[0].max or float("inf")
                         y_min = dims[1].min or float("-inf")
                         y_max = dims[1].max or float("inf")
-                        verts = [(x_min, y_min), (x_max, y_min),
-                                 (x_max, y_max), (x_min, y_max)]
+                        verts = [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
                         self.add_gate_overlay(gid, verts, label=gid)
             except Exception as exc:
                 _logger.debug("Overlay ignoré pour %s : %s", gid, exc)
@@ -646,13 +707,20 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             self.set_draw_mode(DrawMode.NAVIGATE)
             _logger.info(
                 "RectangleGate émise : %s x=[%.3f,%.3f] y=[%.3f,%.3f]",
-                self._next_gate_name, x_min, x_max, y_min, y_max,
+                self._next_gate_name,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
             )
             self.rectangleGateCompleted.emit(
                 self._next_gate_name,
                 self._x_channel,
                 self._y_channel,
-                x_min, x_max, y_min, y_max,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
             )
 
     def _cleanup_rect_preview(self) -> None:
@@ -720,9 +788,7 @@ class InteractiveGatingCanvas(pg.PlotWidget):
     # Calcul densité locale (proxy KDE via histogramme 2D)
     # ------------------------------------------------------------------
 
-    def _compute_density_colors(
-        self, xd: np.ndarray, yd: np.ndarray
-    ) -> List:
+    def _compute_density_colors(self, xd: np.ndarray, yd: np.ndarray) -> List:
         """
         Estime la densité locale par histogramme 2D et retourne une liste de QColor.
 

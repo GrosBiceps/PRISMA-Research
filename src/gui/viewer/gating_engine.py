@@ -34,9 +34,12 @@ try:
     from flowkit import gates as fk_gates
     from flowkit import transforms as fk_transforms
 
+    fkt = fk_transforms
+
     FLOWKIT_AVAILABLE = True
 except Exception as exc:  # pragma: no cover - dépendance optionnelle
     fk = None  # type: ignore[assignment]
+    fkt = None  # type: ignore[assignment]
     fk_gates = None  # type: ignore[assignment]
     fk_transforms = None  # type: ignore[assignment]
     FLOWKIT_AVAILABLE = False
@@ -183,6 +186,7 @@ class PrismaFlowEngine:
             self._backend = fk.Session()
         else:
             self._backend = _UnavailableFlowKitBackend(_FLOWKIT_IMPORT_ERROR)
+        self.log = _logger
         self._active_sample_id: Optional[str] = None
         self._active_group: Optional[str] = None
         self._transform_specs: Dict[str, TransformSpec] = {}
@@ -242,6 +246,11 @@ class PrismaFlowEngine:
         return self._active_sample_id
 
     @property
+    def sample_id(self) -> Optional[str]:
+        """Alias de compatibilité pour l'échantillon actif."""
+        return self._active_sample_id
+
+    @property
     def active_group(self) -> Optional[str]:
         return self._active_group
 
@@ -274,6 +283,39 @@ class PrismaFlowEngine:
         sample = self._backend.get_sample(sid)
         df = sample.as_dataframe(source="raw")
         return [col[0] if isinstance(col, tuple) else str(col) for col in df.columns]
+
+    def get_channel_marker_mapping(self, sample_id: Optional[str] = None) -> Dict[str, str]:
+        """
+        Retourne le mapping Pnn -> PnS (fallback Pnn si PnS absent).
+
+        Le mapping est utilisé par l'UI pour afficher "Marqueur (Canal)"
+        tout en conservant le canal Pnn en userData.
+        """
+        sid = sample_id or self._require_active_sample()
+        sample = self._backend.get_sample(sid)
+
+        def _norm(values: Any) -> List[str]:
+            if values is None:
+                return []
+            return [str(v).strip() for v in list(values)]
+
+        pnn_labels = _norm(getattr(sample, "pnn_labels", None))
+        pns_labels = _norm(getattr(sample, "pns_labels", None))
+
+        mapping: Dict[str, str] = {}
+        if pnn_labels:
+            for i, pnn in enumerate(pnn_labels):
+                if not pnn:
+                    continue
+                pns = pns_labels[i] if i < len(pns_labels) else ""
+                mapping[pnn] = pns or pnn
+
+        if not mapping:
+            channels = self.get_sample_channels(sample_id=sid)
+            for ch in channels:
+                mapping[str(ch)] = str(ch)
+
+        return mapping
 
     def get_active_sample(self) -> fk.Sample:
         sid = self._require_active_sample()
@@ -321,7 +363,7 @@ class PrismaFlowEngine:
     # ------------------------------------------------------------------
 
     def load_fcs(self, fcs_path: Union[str, Path], make_active: bool = True) -> str:
-        """Charge un FCS dans le backend Session."""
+        """Charge un FCS dans le backend Session avec sample_id sûr et logs explicites."""
         self._require_flowkit()
         fcs_path = Path(fcs_path)
         if not fcs_path.is_file():
@@ -332,13 +374,76 @@ class PrismaFlowEngine:
                 "load_fcs() non disponible sur Workspace. "
                 "Chargez le WSP avec load_wsp() qui inclut les FCS."
             )
-        sample = fk.Sample(str(fcs_path))
-        self._as_session().add_samples(sample)
-        sample_id = sample.id
-        _logger.info("FCS chargé : %s → %s", fcs_path.name, sample_id)
-        if make_active:
-            self._active_sample_id = sample_id
-        return sample_id
+
+        session = self._as_session()
+        try:
+            # ID stable/sûr: nom de fichier sans extension, caractères incompatibles normalisés.
+            base_id = "".join(ch if (ch.isalnum() or ch in "_-.") else "_" for ch in fcs_path.stem)
+            base_id = base_id.strip("._") or "sample"
+
+            existing_ids = set(session.get_sample_ids())
+            sample_id = base_id
+            suffix = 1
+            while sample_id in existing_ids:
+                sample_id = f"{base_id}_{suffix}"
+                suffix += 1
+
+            try:
+                sample = fk.Sample(str(fcs_path), sample_id=sample_id)
+            except TypeError:
+                # Compatibilité API FlowKit: certains builds n'acceptent pas sample_id au constructeur.
+                sample = fk.Sample(str(fcs_path))
+                try:
+                    sample.id = sample_id
+                except Exception:
+                    sample_id = str(getattr(sample, "id", sample_id))
+
+            if hasattr(session, "add_sample"):
+                session.add_sample(sample)
+            else:
+                session.add_samples(sample)
+
+            loaded_id = str(getattr(sample, "id", sample_id))
+            if make_active:
+                self._active_sample_id = loaded_id
+
+            # Auto-compensation depuis métadonnées FCS (SPILL/SPILLOVER)
+            # Enregistre la matrice dans la session ET l'applique au Sample natif
+            try:
+                meta = {}
+                try:
+                    meta = dict(sample.get_metadata())
+                except Exception:
+                    meta = dict(getattr(sample, "metadata", {}) or {})
+                spill_key = next(
+                    (k for k in meta if str(k).strip().lower() in {"spill", "spillover", "$spill", "$spillover"}),
+                    None,
+                )
+                if spill_key is not None:
+                    spill_value = meta[spill_key]
+                    # FlowKit Matrix(spill_data, detectors) — les détecteurs sont les canaux fluoro
+                    fluoro_pnn = [sample.pnn_labels[i] for i in sample.fluoro_indices]
+                    fluoro_pns = [sample.pns_labels[i] for i in sample.fluoro_indices]
+                    matrix_id = f"spill_{loaded_id}"
+                    matrix = fk.Matrix(spill_value, detectors=fluoro_pnn, fluorochromes=fluoro_pns)
+                    # Enregistrer dans la session (pour get_comp_matrix() ultérieur)
+                    session.add_comp_matrix(matrix_id, matrix)
+                    if matrix_id not in self._comp_matrix_ids:
+                        self._comp_matrix_ids.append(matrix_id)
+                    self.log.info("Auto-compensation enregistrée : %s", matrix_id)
+            except Exception as exc_comp:
+                self.log.debug("Auto-compensation ignorée pour %s : %s", loaded_id, exc_comp)
+
+            self.log.info("FCS chargé et prêt: %s -> %s", fcs_path.name, loaded_id)
+            return loaded_id
+        except Exception as exc:
+            self.log.error(
+                "Echec load_fcs('%s') dans PrismaFlowEngine: %s",
+                str(fcs_path),
+                exc,
+                exc_info=True,
+            )
+            raise
 
     def load_fcs_batch(
         self,
@@ -485,6 +590,53 @@ class PrismaFlowEngine:
     # D. Compensation
     # ------------------------------------------------------------------
 
+    def apply_spillover_matrix(self, sample_id: Optional[str] = None) -> Optional[str]:
+        """
+        Active la compensation depuis les métadonnées FCS (TEXT segment), si présente.
+
+        Returns:
+            matrix_id ajouté à la session, ou None si aucune matrice n'est trouvée.
+        """
+        sid = sample_id or self._require_active_sample()
+        if self._is_workspace():
+            raise PrismaEngineError(
+                "apply_spillover_matrix() non disponible sur Workspace FlowJo chargé."
+            )
+
+        sample = self._backend.get_sample(sid)
+        metadata: Dict[str, Any] = {}
+        try:
+            metadata = dict(sample.get_metadata())
+        except Exception:
+            metadata = dict(getattr(sample, "metadata", {}) or {})
+
+        spill_value: Any = None
+        if metadata:
+            for key, value in metadata.items():
+                if str(key).strip().lower() in {"spill", "spillover", "$spill", "$spillover"}:
+                    spill_value = value
+                    break
+
+        if spill_value is None:
+            self.log.warning("Aucune matrice spillover trouvée dans les métadonnées de %s", sid)
+            return None
+
+        try:
+            matrix_id = f"spill_{sid}"
+            fluoro_pnn = [sample.pnn_labels[i] for i in sample.fluoro_indices]
+            fluoro_pns = [sample.pns_labels[i] for i in sample.fluoro_indices]
+            matrix = fk.Matrix(spill_value, detectors=fluoro_pnn, fluorochromes=fluoro_pns)
+            self._as_session().add_comp_matrix(matrix_id, matrix)
+            if matrix_id not in self._comp_matrix_ids:
+                self._comp_matrix_ids.append(matrix_id)
+            self.log.info("Compensation activée depuis métadonnées FCS: %s", matrix_id)
+            return matrix_id
+        except Exception as exc:
+            self.log.error(
+                "Echec apply_spillover_matrix(sample_id=%s): %s", sid, exc, exc_info=True
+            )
+            raise
+
     def load_compensation_from_fcs_metadata(self, sample_id: Optional[str] = None) -> Optional[str]:
         """Lit la matrice spillover depuis les métadonnées FCS."""
         sid = sample_id or self._require_active_sample()
@@ -501,10 +653,13 @@ class PrismaFlowEngine:
 
         try:
             matrix_id = f"spill_{sid}"
-            matrix = fk.Matrix(meta[spill_key])
+            fluoro_pnn = [sample.pnn_labels[i] for i in sample.fluoro_indices]
+            fluoro_pns = [sample.pns_labels[i] for i in sample.fluoro_indices]
+            matrix = fk.Matrix(meta[spill_key], detectors=fluoro_pnn, fluorochromes=fluoro_pns)
             if not self._is_workspace():
                 self._as_session().add_comp_matrix(matrix_id, matrix)
-            self._comp_matrix_ids.append(matrix_id)
+            if matrix_id not in self._comp_matrix_ids:
+                self._comp_matrix_ids.append(matrix_id)
             _logger.info("Matrice de compensation FCS chargée : %s", matrix_id)
             return matrix_id
         except Exception as exc:
@@ -693,6 +848,198 @@ class PrismaFlowEngine:
         self.add_transform(transform_id, spec)
         return transform_id
 
+    def apply_logicle_transform(
+        self,
+        transform_id: str = "logicle_default",
+        param_t: float = 262144,
+        param_m: float = 4.5,
+        param_w: float = 0.5,
+        param_a: float = 0.0,
+        sample_id: Optional[str] = None,
+    ) -> str:
+        """
+        Crée/active une transformation Logicle pour la vue et le gating.
+
+        Les canaux de diffusion/temps (FSC/SSC/TIME) sont exclus du scope
+        de référence afin d'aligner l'usage cytométrie standard.
+        """
+        if self._is_workspace():
+            raise PrismaEngineError(
+                "apply_logicle_transform() non disponible sur Workspace FlowJo chargé."
+            )
+
+        sid = sample_id or self._require_active_sample()
+        channels = self.get_sample_channels(sample_id=sid)
+        fluorescence_channels = [
+            ch
+            for ch in channels
+            if all(token not in ch.upper() for token in ("FSC", "SSC", "TIME"))
+        ]
+
+        if transform_id not in self._transform_specs:
+            spec = TransformSpec(
+                kind="logicle",
+                channel_ids=fluorescence_channels,
+                params={
+                    "param_t": param_t,
+                    "param_m": param_m,
+                    "param_w": param_w,
+                    "param_a": param_a,
+                },
+            )
+            self.add_transform(transform_id, spec)
+        else:
+            self.log.debug("Transformation '%s' déjà active", transform_id)
+
+        self.log.info(
+            "Logicle active: id=%s, canaux_fluorescents=%d",
+            transform_id,
+            len(fluorescence_channels),
+        )
+        return transform_id
+
+    def apply_transformation(self, transform_type: str = "Logicle") -> Optional[str]:
+        """
+        Instancie et applique dynamiquement la transformation sélectionnée.
+
+        Correctif critique: applique explicitement la transformation au sample actif
+        pour éviter l'erreur "Transformed events were requested but do not exist".
+        """
+        self._require_flowkit()
+        if self._is_workspace():
+            raise PrismaEngineError(
+                "apply_transformation() non disponible sur Workspace FlowJo chargé."
+            )
+
+        sid = self.sample_id or self._require_active_sample()
+        if not sid:
+            return None
+
+        transform_name = str(transform_type or "Logicle").strip().title()
+        transform_id = f"transform_{transform_name.lower()}"
+
+        # Paramètres de référence cytométrie
+        params = {
+            "param_t": 262144,
+            "param_m": 4.5,
+            "param_w": 0.5,
+            "param_a": 0.0,
+        }
+
+        def _build_xform() -> Any:
+            # Compatibilité API FlowKit: signatures différentes selon versions.
+            if transform_name == "Logicle":
+                for kwargs in (
+                    {"t": 262144, "m": 4.5, "w": 0.5, "a": 0.0},
+                    {"param_t": 262144, "param_m": 4.5, "param_w": 0.5, "param_a": 0.0},
+                ):
+                    try:
+                        return fkt.LogicleTransform(**kwargs)
+                    except TypeError:
+                        continue
+            elif transform_name == "Hyperlog":
+                for kwargs in (
+                    {"t": 262144, "m": 4.5, "w": 0.5, "a": 0.0},
+                    {"param_t": 262144, "param_m": 4.5, "param_w": 0.5, "param_a": 0.0},
+                ):
+                    try:
+                        return fkt.HyperlogTransform(**kwargs)
+                    except TypeError:
+                        continue
+            elif transform_name == "Asinh":
+                for kwargs in (
+                    {"t": 262144, "m": 4.5, "a": 0.0},
+                    {"param_t": 262144, "param_m": 4.5, "param_a": 0.0},
+                ):
+                    try:
+                        return fkt.AsinhTransform(**kwargs)
+                    except TypeError:
+                        continue
+            elif transform_name == "Log":
+                for kwargs in (
+                    {"t": 262144, "m": 4.5},
+                    {"param_t": 262144, "param_m": 4.5},
+                ):
+                    try:
+                        return fkt.LogTransform(**kwargs)
+                    except TypeError:
+                        continue
+            elif transform_name == "Linear":
+                for kwargs in (
+                    {"a": 1.0, "t": 262144},
+                    {"param_a": 1.0, "param_t": 262144},
+                ):
+                    try:
+                        return fkt.LinearTransform(**kwargs)
+                    except TypeError:
+                        continue
+
+            # Fallback robuste
+            try:
+                return fkt.LogicleTransform(t=262144, m=4.5, w=0.5, a=0.0)
+            except TypeError:
+                return fkt.LogicleTransform(
+                    param_t=params["param_t"],
+                    param_m=params["param_m"],
+                    param_w=params["param_w"],
+                    param_a=params["param_a"],
+                )
+
+        try:
+            xform = _build_xform()
+            session = self.session
+
+            # 1) Enregistrement dans la session
+            existing_transform = None
+            try:
+                existing_transform = session.get_transform(transform_id)
+            except Exception:
+                existing_transform = None
+
+            if existing_transform is not None:
+                xform = existing_transform
+            else:
+                try:
+                    session.add_transform(transform_id, xform)
+                except TypeError:
+                    try:
+                        session.add_transform(xform)
+                    except KeyError:
+                        # Déjà défini: réutiliser la transformation existante.
+                        xform = session.get_transform(transform_id)
+                except KeyError:
+                    # Déjà défini: réutiliser la transformation existante.
+                    xform = session.get_transform(transform_id)
+
+            # 2) Application directe au sample actif (correctif cache xform)
+            sample = session.get_sample(sid)
+            try:
+                sample.apply_transform(xform)
+            except TypeError:
+                sample.apply_transform(transform=xform)
+
+            # Conserver la transformation active côté engine
+            self._transform_specs[transform_id] = TransformSpec(
+                kind=transform_name.lower(),
+                params=params,
+            )
+
+            self.log.info(
+                "Transformation %s appliquée avec succès au sample %s.",
+                transform_name,
+                sid,
+            )
+            return transform_id
+        except Exception as exc:
+            self.log.error(
+                "Echec apply_transformation(type=%s, sample=%s): %s",
+                transform_type,
+                sid,
+                exc,
+                exc_info=True,
+            )
+            raise
+
     def get_transform_ids(self) -> List[str]:
         return list(self._transform_specs.keys())
 
@@ -708,9 +1055,62 @@ class PrismaFlowEngine:
         """Retourne le DataFrame transformé/compensé d'un sample."""
         sid = sample_id or self._require_active_sample()
         sample = self._backend.get_sample(sid)
-        source = "xform" if transform_id is not None else "raw"
-        df = sample.as_dataframe(source=source)
-        return df
+        if transform_id is None:
+            return self._normalize_dataframe_channels(sample.as_dataframe(source="raw"))
+
+        try:
+            return self._normalize_dataframe_channels(sample.as_dataframe(source="xform"))
+        except Exception:
+            # Fallback: si cache xform absent, appliquer explicitement la transform puis relire.
+            if not self._is_workspace():
+                try:
+                    transform = self.session.get_transform(transform_id)
+                    try:
+                        sample.apply_transform(transform)
+                    except TypeError:
+                        sample.apply_transform(transform=transform)
+                    return self._normalize_dataframe_channels(sample.as_dataframe(source="xform"))
+                except Exception:
+                    pass
+            return self._normalize_dataframe_channels(sample.as_dataframe(source="raw"))
+
+    def _normalize_dataframe_channels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalise les colonnes FlowKit vers des noms Pnn simples.
+
+        FlowKit peut retourner des colonnes tuple (Pnn, PnS) ; l'UI manipule
+        des canaux Pnn (`FL1-A`, `CD45-A`, etc.), donc on aplati ici.
+        """
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return df
+
+        normalized_cols: List[str] = []
+        has_tuple_cols = False
+
+        for col in df.columns:
+            if isinstance(col, tuple):
+                has_tuple_cols = True
+                # FlowKit retourne typiquement (Pnn, PnS) ; l'UI manipule les Pnn.
+                pnn = str(col[0]).strip() if len(col) > 0 else ""
+                if pnn:
+                    normalized_cols.append(pnn)
+                else:
+                    fallback = ""
+                    for part in col:
+                        part_s = str(part).strip()
+                        if part_s:
+                            fallback = part_s
+                            break
+                    normalized_cols.append(fallback or str(col))
+            else:
+                normalized_cols.append(str(col))
+
+        if not has_tuple_cols:
+            return df
+
+        out = df.copy()
+        out.columns = normalized_cols
+        return out
 
     # ------------------------------------------------------------------
     # F. Gating — création (Session uniquement)
@@ -1055,13 +1455,14 @@ class PrismaFlowEngine:
             if transform_id and not self._is_workspace()
             else None
         )
-        return self._backend.get_gate_events(
+        df = self._backend.get_gate_events(
             sid,
             gate_name=gate_name,
             gate_path=gate_path,
             matrix=matrix,
             transform=transform,
         )
+        return self._normalize_dataframe_channels(df)
 
     def get_gate_membership(
         self,
@@ -1106,6 +1507,151 @@ class PrismaFlowEngine:
             transform_id=transform_id,
             comp_matrix_id=comp_matrix_id,
         )
+
+    def get_population_df(
+        self,
+        gate_node: Tuple[str, ...],
+        sample_id: Optional[str] = None,
+        transform_id: Optional[str] = None,
+        comp_matrix_id: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        Pipeline garanti comp→xform→filter (Kaluza-like).
+
+        Convention gate_node:
+            ('root',)               -> population globale (tous événements)
+            (gate_name, *gate_path) -> événements positifs de la gate
+
+        La compensation et la transformation sont appliquées manuellement sur
+        le DataFrame brut du Sample, indépendamment des comp_ref/transformation_ref
+        stockés dans les Dimensions des gates.  C'est la seule approche garantissant
+        un rendu visuel correct quel que soit l'état de la GatingStrategy.
+        """
+        sid = sample_id or self._require_active_sample()
+        full_df = self._build_comp_xform_df(sid, transform_id, comp_matrix_id)
+
+        if not gate_node or str(gate_node[0]).lower() == "root":
+            return full_df
+
+        gate_name = str(gate_node[0])
+        gate_path = tuple(gate_node[1:]) if len(gate_node) > 1 else None
+
+        # get_gate_membership exige que analyze_samples() ait été appelé
+        # (_results_lut[sid] doit exister). On l'exécute automatiquement si absent.
+        try:
+            self._backend.get_gate_membership(sid, gate_name, gate_path=gate_path)
+        except KeyError:
+            _logger.debug("_results_lut absent pour %s — analyze_samples() auto", sid)
+            try:
+                self._backend.analyze_samples(sample_id=sid, verbose=False)
+                _logger.debug("analyze_samples(%s) OK", sid)
+                print(f"[ENGINE] analyze_samples({sid}) exécuté automatiquement")
+            except Exception as exc_analyze:
+                _logger.warning("analyze_samples auto échoué : %s — population complète", exc_analyze)
+                return full_df
+        except Exception:
+            pass  # sera re-tenté ci-dessous avec log complet
+
+        try:
+            mask = self._backend.get_gate_membership(sid, gate_name, gate_path=gate_path)
+            mask_flat = np.asarray(mask, dtype=bool).flatten()
+            if mask_flat.shape[0] == full_df.shape[0]:
+                filtered = full_df[mask_flat].reset_index(drop=True)
+                print(f"[ENGINE] Gate '{gate_name}': {mask_flat.sum()}/{len(mask_flat)} events")
+                return filtered
+            _logger.warning(
+                "Shape mismatch masque %d vs df %d pour gate '%s' — population complète",
+                mask_flat.shape[0], full_df.shape[0], gate_name,
+            )
+        except Exception as exc:
+            _logger.warning("get_gate_membership échoué pour '%s': %s — population complète", gate_name, exc)
+
+        return full_df
+
+    def _build_comp_xform_df(
+        self,
+        sid: str,
+        transform_id: Optional[str],
+        comp_matrix_id: Optional[str],
+    ) -> pd.DataFrame:
+        """
+        Pipeline natif FlowKit : comp → xform sur le Sample, puis as_dataframe.
+
+        Utilise exclusivement les méthodes natives FlowKit :
+          - sample.apply_compensation(matrix_obj) → peuple _comp_events
+          - sample.apply_transform(xform_obj)     → peuple _transformed_events
+          - sample.as_dataframe(source='xform', col_multi_index=False)
+
+        Le Sample est modifié in-place (FlowKit le fait toujours ainsi).
+        Priorité de la source retournée : xform → comp → raw.
+        """
+        self._require_flowkit()
+        sample = self._backend.get_sample(sid)
+
+        # --- Étape 1 : Compensation native FlowKit ---
+        matrix_id = comp_matrix_id or (self._comp_matrix_ids[0] if self._comp_matrix_ids else None)
+        comp_ok = False
+        if matrix_id and not self._is_workspace():
+            try:
+                session = self._as_session()
+                matrix_obj = session.get_comp_matrix(matrix_id)
+                sample.apply_compensation(matrix_obj)
+                comp_ok = True
+                _logger.debug("[PIPELINE] Compensation OK: matrix_id=%s", matrix_id)
+                print(f"[ENGINE] Compensation appliquée: {matrix_id}")
+            except Exception as exc:
+                _logger.warning("[PIPELINE] apply_compensation échoué (%s): %s", matrix_id, exc)
+                print(f"[ENGINE] WARN compensation échouée ({matrix_id}): {exc}")
+        else:
+            print(f"[ENGINE] Pas de compensation (matrix_id={matrix_id}, is_workspace={self._is_workspace()})")
+
+        # --- Étape 2 : Transformation native FlowKit ---
+        xform_id = transform_id or (next(iter(self._transform_specs), None))
+        xform_ok = False
+        if xform_id and not self._is_workspace():
+            try:
+                session = self._as_session()
+                xform_obj = session.get_transform(xform_id)
+                sample.apply_transform(xform_obj)
+                xform_ok = True
+                _logger.debug("[PIPELINE] Transform OK: xform_id=%s", xform_id)
+                print(f"[ENGINE] Transformation appliquée: {xform_id}")
+            except Exception as exc:
+                _logger.warning("[PIPELINE] apply_transform échoué (%s): %s", xform_id, exc)
+                print(f"[ENGINE] WARN transform échouée ({xform_id}): {exc}")
+        else:
+            print(f"[ENGINE] Pas de transformation (xform_id={xform_id}, is_workspace={self._is_workspace()})")
+
+        # --- Étape 3 : Lire dans le meilleur espace disponible ---
+        for source in ("xform", "comp", "raw"):
+            try:
+                df = sample.as_dataframe(source=source, col_multi_index=False)
+                if df is not None and not df.empty:
+                    df.columns = [str(c).strip() for c in df.columns]
+                    # Log diagnostique : min/max sur 2 premiers canaux fluoro
+                    fluoro_cols = [c for c in df.columns
+                                   if all(t not in str(c).upper() for t in ("FSC","SSC","TIME"))]
+                    if fluoro_cols:
+                        col0 = fluoro_cols[0]
+                        v = df[col0].dropna()
+                        print(
+                            f"[ENGINE] DataFrame source='{source}' OK — {len(df)} events, "
+                            f"{len(df.columns)} canaux | {col0}: min={v.min():.4f} max={v.max():.4f}"
+                        )
+                    else:
+                        print(f"[ENGINE] DataFrame source='{source}' OK — {len(df)} events")
+                    return df
+            except AttributeError:
+                print(f"[ENGINE] source='{source}' non peuplé (AttributeError) → essai suivant")
+                continue
+            except Exception as exc:
+                _logger.debug("as_dataframe(source='%s') échoué: %s", source, exc)
+                print(f"[ENGINE] source='{source}' échoué: {exc}")
+                continue
+
+        _logger.error("_build_comp_xform_df: toutes sources épuisées pour %s", sid)
+        print(f"[ENGINE] ERREUR: toutes sources épuisées pour sample {sid}")
+        return pd.DataFrame()
 
     # ------------------------------------------------------------------
     # I. Hiérarchie pour le QTreeView

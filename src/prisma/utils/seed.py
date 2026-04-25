@@ -29,7 +29,7 @@ def set_global_seed(seed: int) -> None:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
-    except ImportError:
+    except (ImportError, OSError):
         pass
 
     logger.debug("Global seed set: %d", seed)

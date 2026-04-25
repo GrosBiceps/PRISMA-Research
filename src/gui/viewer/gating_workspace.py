@@ -18,7 +18,7 @@ import json
 import logging
 from pathlib import Path
 from enum import Enum, auto
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from PyQt5.QtCore import Qt, QModelIndex, pyqtSignal
@@ -39,6 +39,7 @@ from PyQt5.QtWidgets import (
     QFrame,
     QInputDialog,
 )
+from PyQt5.QtGui import QFont
 
 from src.utils.logger import get_logger
 from .gating_engine import (
@@ -162,6 +163,8 @@ class PrismaGatingWorkspace(QWidget):
         self._active_gate_name: Optional[str] = None
         self._active_transform_id: Optional[str] = None
         self._active_comp_id: Optional[str] = None
+        self._current_gate_node: Tuple[str, ...] = ("root",)
+        self._last_canvas_axes: Optional[Tuple[str, str]] = None
         self._loaded_fcs_paths: List[str] = []
         self._last_saved_workspace_path: Optional[str] = None
 
@@ -176,6 +179,7 @@ class PrismaGatingWorkspace(QWidget):
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
+        self.setFont(QFont("Segoe UI", 9))
 
         splitter = QSplitter(Qt.Horizontal, self)
         splitter.setHandleWidth(4)
@@ -202,7 +206,7 @@ class PrismaGatingWorkspace(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet("""
-            QWidget { background: #080D18; color: #EEF2F7; font-family: 'Outfit', 'Segoe UI', sans-serif; }
+            QWidget { background: #080D18; color: #EEF2F7; font-family: 'Segoe UI', 'Inter', 'Roboto', Arial, sans-serif; }
             QSplitter::handle { background: #141E2E; }
             QPushButton {
                 background: #141E2E; border: 1px solid #2A3342; border-radius: 4px;
@@ -311,13 +315,17 @@ class PrismaGatingWorkspace(QWidget):
 
         vtr.addWidget(QLabel("Transformation"))
         self._combo_transform = QComboBox()
-        self._combo_transform.addItem("— Brut —")
+        self._combo_transform.addItems(["Logicle", "Hyperlog", "Asinh", "Log", "Linear"])
+        self._combo_transform.setCurrentText("Logicle")
         vtr.addWidget(self._combo_transform)
 
         vtr.addWidget(QLabel("Compensation"))
         self._combo_comp = QComboBox()
         self._combo_comp.addItem("— Non compensé —")
         vtr.addWidget(self._combo_comp)
+
+        self._chk_enable_comp = QCheckBox("Activer Compensation")
+        vtr.addWidget(self._chk_enable_comp)
 
         self._chk_density = QCheckBox("Coloration par densité")
         vtr.addWidget(self._chk_density)
@@ -393,6 +401,12 @@ class PrismaGatingWorkspace(QWidget):
         # Contrôles → affichage
         self._combo_group.currentTextChanged.connect(self._on_group_changed)
         self._combo_sample.currentTextChanged.connect(self._on_sample_changed)
+        self._combo_population.currentTextChanged.connect(self._on_population_changed)
+        self._combo_x.currentIndexChanged.connect(self._on_axes_changed)
+        self._combo_y.currentIndexChanged.connect(self._on_axes_changed)
+        self._combo_transform.currentTextChanged.connect(self._on_transform_changed)
+        self._combo_comp.currentIndexChanged.connect(self._refresh_canvas)
+        self._chk_enable_comp.toggled.connect(self._on_compensation_toggled)
         self._btn_apply.clicked.connect(self._refresh_canvas)
 
         # Boutons dessin
@@ -434,16 +448,64 @@ class PrismaGatingWorkspace(QWidget):
         if not folder.exists() or not folder.is_dir():
             raise FileNotFoundError(f"Dossier FCS introuvable: {folder}")
 
-        files = sorted(folder.glob("*.fcs")) + sorted(folder.glob("*.FCS"))
+        # Dédupliquer explicitement (Windows: *.fcs et *.FCS peuvent matcher les mêmes fichiers).
+        file_map: Dict[str, Path] = {}
+        for p in list(folder.glob("*.fcs")) + list(folder.glob("*.FCS")):
+            resolved = p.resolve()
+            file_map[str(resolved).lower()] = resolved
+        files = sorted(file_map.values(), key=lambda p: p.name.lower())
         if not files:
             raise FileNotFoundError(f"Aucun fichier FCS trouvé dans: {folder}")
 
-        engine = PrismaFlowEngine()
-        engine.load_fcs_batch(files, make_first_active=True)
-        self._engine = engine
-        self._loaded_fcs_paths = [str(p.resolve()) for p in files]
+        self._engine = PrismaFlowEngine()
+        self._loaded_fcs_paths = []
         self._last_saved_workspace_path = None
+
+        for fpath in files:
+            self.load_sample(str(fpath.resolve()))
+
         self.reload_from_engine()
+
+    def load_sample(self, file_path: str) -> bool:
+        """Charge un FCS via le moteur puis force un rafraîchissement UI complet."""
+        try:
+            print(f"[GatingWorkspace] 1. Appel Engine -> load_fcs('{file_path}')")
+            _logger.debug("1. Appel Engine -> load_fcs('%s')", file_path)
+            sample_id = self._engine.load_fcs(file_path, make_active=True)
+
+            print(f"[GatingWorkspace] 2. Engine OK -> sample_id='{sample_id}'")
+            _logger.debug("2. Engine OK -> sample_id='%s'", sample_id)
+
+            self._active_sample_id = sample_id
+            self._loaded_fcs_paths.append(str(Path(file_path).resolve()))
+
+            # Appliquer immédiatement la transformation par défaut (Logicle)
+            # pour garantir la disponibilité des événements transformés au premier rendu.
+            default_transform = self._combo_transform.currentText().strip() or "Logicle"
+            self._active_transform_id = self._engine.apply_transformation(default_transform)
+
+            # Forcer l'arbre à se reconstruire immédiatement après chargement réel.
+            if hasattr(self._gate_tree_model, "build_hierarchy"):
+                self._gate_tree_model.build_hierarchy()
+            else:
+                self._refresh_tree()
+
+            print("[GatingWorkspace] 3. Arbre mis à jour")
+            _logger.debug("3. Arbre mis à jour")
+
+            self._reload_sample_combo()
+            self._reload_channel_combos()
+
+            # Forcer l'affichage de la population racine puis demander le tracé.
+            self._combo_population.setCurrentIndex(0)
+            self._refresh_canvas()
+
+            print("[GatingWorkspace] 4. Plot demandé (population Root)")
+            _logger.debug("4. Plot demandé (population Root)")
+            return True
+        except Exception as exc:
+            _logger.error("Echec load_sample('%s'): %s", file_path, exc, exc_info=True)
+            raise
 
     def get_available_populations(self) -> List[str]:
         """Retourne la liste des populations disponibles pour l'orchestrateur Wizard."""
@@ -583,7 +645,7 @@ class PrismaGatingWorkspace(QWidget):
 
     def _reload_channel_combos(self) -> None:
         try:
-            channels = self._engine.get_sample_channels()
+            mapping = self._engine.get_channel_marker_mapping(sample_id=self._current_sample_id())
         except Exception:
             return
 
@@ -591,10 +653,11 @@ class PrismaGatingWorkspace(QWidget):
             combo.blockSignals(True)
             combo.clear()
 
-        self._combo_y.addItem("")
-        for ch in channels:
-            self._combo_x.addItem(ch)
-            self._combo_y.addItem(ch)
+        self._combo_y.addItem("", userData="")
+        for pnn, marker in mapping.items():
+            display = f"{marker} ({pnn})" if marker and marker != pnn else pnn
+            self._combo_x.addItem(display, userData=pnn)
+            self._combo_y.addItem(display, userData=pnn)
 
         for combo in (self._combo_x, self._combo_y):
             combo.blockSignals(False)
@@ -602,9 +665,8 @@ class PrismaGatingWorkspace(QWidget):
     def _reload_transform_combo(self) -> None:
         self._combo_transform.blockSignals(True)
         self._combo_transform.clear()
-        self._combo_transform.addItem("— Brut —")
-        for tid in self._engine.get_transform_ids():
-            self._combo_transform.addItem(tid)
+        self._combo_transform.addItems(["Logicle", "Hyperlog", "Asinh", "Log", "Linear"])
+        self._combo_transform.setCurrentText("Logicle")
         self._combo_transform.blockSignals(False)
 
     def _reload_comp_combo(self) -> None:
@@ -682,28 +744,57 @@ class PrismaGatingWorkspace(QWidget):
             self._show_error(f"Changement de sample : {exc}")
 
     def _refresh_canvas(self) -> None:
-        """Récupère les données depuis le moteur et met à jour le canvas."""
-        x_ch = self._combo_x.currentText().strip()
-        y_ch = self._combo_y.currentText().strip()
-        transform_id = self._selected_transform()
-        comp_id = self._selected_comp()
-        pop_sel = self._combo_population.currentText()
+        """
+        Pipeline Kaluza-like :
+          1. Lit les Pnn depuis userData des comboboxes (jamais le texte affiché)
+          2. Demande au moteur le df compensé+transformé filtré par la gate active
+          3. La gate _current_gate_node n'est jamais réinitialisée ici — persistance garantie
+          4. Envoie au canvas avec labels PnS corrects sur les axes
+        """
+        x_ch = self._selected_axis_channel(self._combo_x)
+        y_ch = self._selected_axis_channel(self._combo_y)
+        sample_id = self._current_sample_id()
 
-        gate_name = None
-        gate_path = None
-        if pop_sel and pop_sel != "— Tous les événements —":
-            gate_name = pop_sel
-            paths = self._engine.find_gate_paths(pop_sel)
-            gate_path = paths[0] if paths else None
-
-        if not x_ch:
+        if not x_ch or not sample_id:
             return
 
+        # transform_id : utiliser l'ID actif (défini par load_sample / _on_transform_changed)
+        # Ne pas utiliser _selected_transform() qui peut retourner None avant le 1er apply
+        transform_id = self._active_transform_id
+        # comp_matrix_id : seulement si checkbox cochée
+        comp_id: Optional[str] = self._selected_comp() if self._chk_enable_comp.isChecked() else None
+
+        gate_name: Optional[str] = None
+        gate_path: Optional[Tuple[str, ...]] = None
+        if self._current_gate_node and self._current_gate_node[0].lower() != "root":
+            gate_name = self._current_gate_node[0]
+            gate_path = (
+                tuple(self._current_gate_node[1:]) if len(self._current_gate_node) > 1 else None
+            )
+
+        # --- Labels PnS pour axes ---
         try:
-            df = self._engine.get_raw_dataframe(
-                sample_id=self._current_sample_id(),
-                gate_name=gate_name,
-                gate_path=gate_path,
+            ch_map = self._engine.get_channel_marker_mapping(sample_id=sample_id)
+        except Exception:
+            ch_map = {}
+        x_label = ch_map.get(x_ch, x_ch)
+        y_label = ch_map.get(y_ch, y_ch) if y_ch else ""
+        if hasattr(self._canvas, "set_axis_labels"):
+            self._canvas.set_axis_labels(x_label, y_label)
+
+        # --- Préserver le zoom si mêmes axes ---
+        prev_view_range = None
+        if self._last_canvas_axes == (x_ch, y_ch):
+            try:
+                prev_view_range = self._canvas.getViewBox().viewRange()
+            except Exception:
+                pass
+
+        # --- Récupérer le DataFrame compensé+transformé+filtré ---
+        try:
+            df = self._engine.get_population_df(
+                self._current_gate_node,
+                sample_id=sample_id,
                 transform_id=transform_id,
                 comp_matrix_id=comp_id,
             )
@@ -711,17 +802,53 @@ class PrismaGatingWorkspace(QWidget):
             self._show_error(f"Chargement données : {exc}")
             return
 
+        if df is None or df.empty:
+            _logger.warning("DataFrame vide pour gate_node=%s", self._current_gate_node)
+            return
+
+        # Tolérance casse/espaces sur les noms de canaux
+        if x_ch not in df.columns:
+            match = next(
+                (c for c in df.columns if str(c).strip().upper() == x_ch.strip().upper()), None
+            )
+            if match:
+                x_ch = match
+            else:
+                _logger.warning(
+                    "Canal X '%s' absent du DataFrame. Colonnes: %s",
+                    x_ch, list(df.columns)[:10],
+                )
+                return
+
+        if y_ch and y_ch not in df.columns:
+            match = next(
+                (c for c in df.columns if str(c).strip().upper() == y_ch.strip().upper()), None
+            )
+            y_ch = match or ""
+
+        # --- Envoi au canvas ---
         density = self._chk_density.isChecked()
         overlay = self._chk_overlay.isChecked()
 
         if overlay and gate_name:
             self._show_overlay_children(df, gate_name, gate_path, x_ch, y_ch)
-        elif y_ch:
+        elif y_ch and y_ch in df.columns:
             self._canvas.set_data_2d(df, x_ch, y_ch, density_coloring=density)
         else:
             self._canvas.set_data_1d(df, x_ch)
 
-        # Recharger les overlays de gates existantes
+        # --- Restaurer le zoom ---
+        if prev_view_range is not None:
+            try:
+                x_range, y_range = prev_view_range
+                self._canvas.getViewBox().setXRange(float(x_range[0]), float(x_range[1]), padding=0)
+                self._canvas.getViewBox().setYRange(float(y_range[0]), float(y_range[1]), padding=0)
+            except Exception:
+                pass
+
+        self._last_canvas_axes = (x_ch, y_ch)
+
+        # --- Overlays gates existantes ---
         self._canvas.reload_gate_overlays_from_engine(self._engine)
 
     def _show_overlay_children(
@@ -771,11 +898,75 @@ class PrismaGatingWorkspace(QWidget):
         if node is None:
             return
         self._active_gate_name = node.gate_id
+        paths = self._engine.find_gate_paths(node.gate_id)
+        if paths:
+            self._current_gate_node = (node.gate_id, *paths[0])
+        else:
+            self._current_gate_node = (node.gate_id,)
         # Mettre à jour le combo population
         idx = self._combo_population.findText(node.gate_id)
         if idx >= 0:
             self._combo_population.setCurrentIndex(idx)
         self._refresh_canvas()
+
+    def _on_population_changed(self, population: str) -> None:
+        """Mémorise la population active pour préserver le contexte lors des changements d'axes."""
+        if not population or population == "— Tous les événements —":
+            self._current_gate_node = ("root",)
+            self._refresh_canvas()
+            return
+
+        paths = self._engine.find_gate_paths(population)
+        self._current_gate_node = (population, *paths[0]) if paths else (population,)
+        self._refresh_canvas()
+
+    def _on_axes_changed(self, _index: int) -> None:
+        """Re-trace la même population active avec les nouveaux axes."""
+        _logger.debug("Axes modifiés -> population active=%s", self._current_gate_node)
+        self._refresh_canvas()
+
+    def _on_compensation_toggled(self, enabled: bool) -> None:
+        """Active/désactive la compensation depuis les métadonnées FCS puis rafraîchit la vue."""
+        if enabled:
+            try:
+                matrix_id = self._engine.apply_spillover_matrix(sample_id=self._current_sample_id())
+                if not matrix_id:
+                    self._chk_enable_comp.setChecked(False)
+                    self._show_error(
+                        "Aucune matrice de compensation détectée dans les métadonnées FCS."
+                    )
+                    return
+
+                idx = self._combo_comp.findText(matrix_id)
+                if idx < 0:
+                    self._combo_comp.addItem(matrix_id)
+                    idx = self._combo_comp.findText(matrix_id)
+                if idx >= 0:
+                    self._combo_comp.setCurrentIndex(idx)
+            except Exception as exc:
+                self._chk_enable_comp.setChecked(False)
+                self._show_error(f"Activation compensation: {exc}")
+                return
+        else:
+            idx = self._combo_comp.findText("— Non compensé —")
+            if idx >= 0:
+                self._combo_comp.setCurrentIndex(idx)
+
+        self._refresh_canvas()
+
+    def _on_transform_changed(self, transform_type: str) -> None:
+        """Applique la transformation sélectionnée puis rafraîchit la vue."""
+        if not transform_type or not self._current_sample_id():
+            return
+
+        try:
+            _logger.debug("[GatingWorkspace] Application de la transformation : %s", transform_type)
+            self._active_transform_id = self._engine.apply_transformation(transform_type)
+            self._refresh_canvas()
+        except Exception as exc:
+            self._show_error(
+                f"UI Error : Impossible d'appliquer la transformation {transform_type} : {exc}"
+            )
 
     # ------------------------------------------------------------------
     # Slots canvas → engine
@@ -794,6 +985,13 @@ class PrismaGatingWorkspace(QWidget):
         if not ok or not name.strip():
             return
         gate_path = self._resolve_parent_path()
+        xform_ref = self._selected_transform()
+        _logger.debug(
+            "create_polygon_gate '%s' gate_path=%s x=%s y=%s transform_ref=%s vertices[0]=%s",
+            name.strip(), gate_path, x_channel, y_channel, xform_ref,
+            vertices[0] if vertices else None,
+        )
+        print(f"[WORKSPACE] PolygonGate '{name.strip()}': transform_ref={xform_ref}, gate_path={gate_path}, vertices[0]={vertices[0] if vertices else None}")
         try:
             self._engine.create_polygon_gate_from_vertices(
                 name.strip(),
@@ -801,9 +999,9 @@ class PrismaGatingWorkspace(QWidget):
                 x_channel,
                 y_channel,
                 vertices,
-                transform_ref=self._selected_transform(),
+                transform_ref=xform_ref,
             )
-            self._post_gate_created()
+            self._post_gate_created(new_gate_name=name.strip())
         except PrismaEngineError as exc:
             self._show_error(str(exc))
         finally:
@@ -826,6 +1024,8 @@ class PrismaGatingWorkspace(QWidget):
             return
         gate_path = self._resolve_parent_path()
         try:
+            xform_ref = self._selected_transform()
+            print(f"[WORKSPACE] RectangleGate '{name.strip()}': transform_ref={xform_ref}")
             self._engine.create_rectangle_gate_from_bounds(
                 name.strip(),
                 gate_path,
@@ -835,9 +1035,9 @@ class PrismaGatingWorkspace(QWidget):
                 x_max,
                 y_min,
                 y_max,
-                transform_ref=self._selected_transform(),
+                transform_ref=xform_ref,
             )
-            self._post_gate_created()
+            self._post_gate_created(new_gate_name=name.strip())
         except PrismaEngineError as exc:
             self._show_error(str(exc))
         finally:
@@ -858,6 +1058,8 @@ class PrismaGatingWorkspace(QWidget):
             return
         gate_path = self._resolve_parent_path()
         try:
+            xform_ref = self._selected_transform()
+            print(f"[WORKSPACE] QuadrantGate '{name.strip()}': transform_ref={xform_ref}")
             self._engine.create_quadrant_gate_from_thresholds(
                 name.strip(),
                 gate_path,
@@ -865,17 +1067,37 @@ class PrismaGatingWorkspace(QWidget):
                 y_channel,
                 x_threshold,
                 y_threshold,
-                transform_ref=self._selected_transform(),
+                transform_ref=xform_ref,
             )
-            self._post_gate_created()
+            self._post_gate_created(new_gate_name=name.strip())
         except PrismaEngineError as exc:
             self._show_error(str(exc))
         finally:
             self._reset_draw_buttons()
 
-    def _post_gate_created(self) -> None:
-        """Actions communes après création d'une gate."""
+    def _post_gate_created(self, new_gate_name: Optional[str] = None) -> None:
+        """
+        Actions après création d'une gate :
+          1. Rebuild arbre
+          2. Auto-sélectionner la nouvelle gate si nom fourni
+          3. Refresh canvas sur la gate parente (contexte courant conservé)
+        """
         self._refresh_tree()
+        # Sélectionner la gate nouvellement créée dans l'arbre et dans le combo population
+        if new_gate_name:
+            idx = self._combo_population.findText(new_gate_name)
+            if idx >= 0:
+                self._combo_population.blockSignals(True)
+                self._combo_population.setCurrentIndex(idx)
+                self._combo_population.blockSignals(False)
+            # Trouver le nœud dans l'arbre et le sélectionner visuellement
+            model = self._gate_tree_model
+            for row in range(model.rowCount()):
+                idx_tree = model.index(row, 0)
+                node = idx_tree.data(Qt.UserRole)
+                if node and getattr(node, 'gate_id', None) == new_gate_name:
+                    self._tree_view.setCurrentIndex(idx_tree)
+                    break
         self._refresh_canvas()
 
     # ------------------------------------------------------------------
@@ -1046,12 +1268,59 @@ class PrismaGatingWorkspace(QWidget):
     # ------------------------------------------------------------------
 
     def _current_sample_id(self) -> Optional[str]:
-        sid = self._combo_sample.currentText()
-        return sid if sid else self._engine.active_sample_id
+        sid = self._combo_sample.currentText().strip()
+        if sid:
+            try:
+                available = self._engine.get_sample_ids()
+            except Exception:
+                available = []
+
+            if sid in available:
+                return sid
+
+            # Le sample affiché n'existe plus (ex: ancien doublon) -> fallback robuste.
+            _logger.warning("Sample UI introuvable dans la session: %s", sid)
+
+        active = self._engine.active_sample_id
+        if active:
+            try:
+                if active in self._engine.get_sample_ids():
+                    return active
+            except Exception:
+                return active
+
+        try:
+            ids = self._engine.get_sample_ids()
+            return ids[0] if ids else None
+        except Exception:
+            return None
+
+    def _selected_axis_channel(self, combo: QComboBox) -> str:
+        """Retourne le canal Pnn stocké dans userData (fallback texte brut robuste).
+
+        Priorité : userData str → parse texte "Marqueur (Pnn)" → texte brut.
+        Retourne '' si combo vide ou item vide sélectionné (cas Y optionnel).
+        """
+        data = combo.currentData()
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+
+        text = combo.currentText().strip()
+        if not text:
+            return ""
+        # Format "Marqueur (Pnn)" → extraire Pnn
+        if text.endswith(")") and "(" in text:
+            pnn = text[text.rfind("(") + 1 : -1].strip()
+            if pnn:
+                return pnn
+        return text
 
     def _selected_transform(self) -> Optional[str]:
-        t = self._combo_transform.currentText()
-        return t if t and t != "— Brut —" else None
+        """Retourne l'ID du transform actif, fallback sur premier disponible dans l'engine."""
+        if self._active_transform_id:
+            return self._active_transform_id
+        ids = self._engine.get_transform_ids()
+        return ids[0] if ids else None
 
     def _selected_comp(self) -> Optional[str]:
         c = self._combo_comp.currentText()
@@ -1076,6 +1345,11 @@ class PrismaGatingWorkspace(QWidget):
     def _show_error(self, message: str) -> None:
         _logger.error("UI Error : %s", message)
         QMessageBox.critical(self, "Erreur PRISMA Gating", message)
+
+    @property
+    def engine(self) -> PrismaFlowEngine:
+        """Accès explicite au moteur pour les intégrations externes."""
+        return self._engine
 
     def closeEvent(self, event: object) -> None:
         """Émet le dernier contexte sauvegardé à la fermeture validée du workspace."""
