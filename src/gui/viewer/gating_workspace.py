@@ -20,6 +20,7 @@ from pathlib import Path
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 from PyQt5.QtCore import Qt, QModelIndex, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -255,9 +256,6 @@ class PlotWidgetPanel(QFrame):
         self._combo_x.currentIndexChanged.connect(self._refresh)
         self._combo_y.currentIndexChanged.connect(self._refresh)
         self._combo_transform.currentTextChanged.connect(self._on_transform_changed)
-        self._canvas.polygonGateCompleted.connect(self._on_gate_signal)
-        self._canvas.rectangleGateCompleted.connect(self._on_gate_signal_rect)
-        self._canvas.quadrantGateCompleted.connect(self._on_gate_signal_quad)
 
     # ------ Transformation locale ----------------------------------------
 
@@ -297,6 +295,15 @@ class PlotWidgetPanel(QFrame):
             return
         if df is None or df.empty:
             return
+
+        pop_name = str(self._gate_node[0]) if self._gate_node else "root"
+        _logger.info(
+            "Panel '%s' -> %d events (x=%s, y=%s)",
+            pop_name,
+            int(len(df)),
+            x_ch,
+            y_ch or "<hist1d>",
+        )
 
         ch_map = self._channel_mapping
         x_label = ch_map.get(x_ch, x_ch)
@@ -555,17 +562,29 @@ class PrismaGatingWorkspace(QWidget):
                         row = report_df[report_df["gate_name"] == gid]
                         if not row.empty:
                             count = int(row["count"].iloc[0]) if "count" in row.columns else 0
-                            pct_parent = float(row["percent_of_parent"].iloc[0]) if "percent_of_parent" in row.columns else 0.0
-                            pct_total = float(row["percent_of_total"].iloc[0]) if "percent_of_total" in row.columns else 0.0
+                            pct_parent = (
+                                float(row["percent_of_parent"].iloc[0])
+                                if "percent_of_parent" in row.columns
+                                else 0.0
+                            )
+                            pct_total = (
+                                float(row["percent_of_total"].iloc[0])
+                                if "percent_of_total" in row.columns
+                                else 0.0
+                            )
                     else:
                         # Fallback manuel : DataFrame de la population
                         paths = self._engine.find_gate_paths(gid)
                         gate_path = paths[0] if paths else None
-                        gdf = self._engine.get_gate_dataframe(gid, gate_path=gate_path, sample_id=sample_id)
+                        gdf = self._engine.get_gate_dataframe(
+                            gid, gate_path=gate_path, sample_id=sample_id
+                        )
                         if gdf is not None:
                             count = len(gdf)
                             try:
-                                total_df = self._engine.get_population_df(("root",), sample_id=sample_id)
+                                total_df = self._engine.get_population_df(
+                                    ("root",), sample_id=sample_id
+                                )
                                 total = len(total_df) if total_df is not None else 0
                                 pct_total = round(100.0 * count / total, 2) if total > 0 else 0.0
                             except Exception:
@@ -576,8 +595,12 @@ class PrismaGatingWorkspace(QWidget):
                 try:
                     paths = self._engine.find_gate_paths(gid)
                     gate_path = paths[0] if paths else None
-                    gdf = self._engine.get_gate_dataframe(gid, gate_path=gate_path, sample_id=sample_id,
-                                                          transform_id=self._active_transform_id)
+                    gdf = self._engine.get_gate_dataframe(
+                        gid,
+                        gate_path=gate_path,
+                        sample_id=sample_id,
+                        transform_id=self._active_transform_id,
+                    )
                     if gdf is not None and not gdf.empty:
                         if x_ch and x_ch in gdf.columns:
                             mfi_x = f"{float(gdf[x_ch].median()):.1f}"
@@ -797,7 +820,7 @@ class PrismaGatingWorkspace(QWidget):
         # Contrôles → affichage
         self._combo_group.currentTextChanged.connect(self._on_group_changed)
         self._combo_sample.currentTextChanged.connect(self._on_sample_changed)
-        self._combo_population.currentTextChanged.connect(self._on_population_changed)
+        self._combo_population.currentIndexChanged.connect(self._on_population_index_changed)
         self._combo_x.currentIndexChanged.connect(self._on_axes_changed)
         self._combo_y.currentIndexChanged.connect(self._on_axes_changed)
         self._combo_transform.currentTextChanged.connect(self._on_transform_changed)
@@ -1096,7 +1119,12 @@ class PrismaGatingWorkspace(QWidget):
         self._combo_population.blockSignals(True)
         self._combo_population.clear()
         self._combo_population.addItem("— Tous les événements —")
+        seen: set[str] = set()
         for gid in gate_ids:
+            gid_s = str(gid).strip()
+            if not gid_s or gid_s in seen:
+                continue
+            seen.add(gid_s)
             self._combo_population.addItem(gid)
         self._combo_population.blockSignals(False)
 
@@ -1106,7 +1134,8 @@ class PrismaGatingWorkspace(QWidget):
         try:
             sample_id = self._current_sample_id()
             roots = self._engine.build_hierarchy(sample_id=sample_id)
-            self._populate_tree(roots, parent_id=None)
+            deduped_roots = self._dedupe_hierarchy_nodes(roots)
+            self._populate_tree(deduped_roots, parent_id=None)
         except Exception as exc:
             _logger.warning("Refresh arbre : %s", exc)
 
@@ -1131,6 +1160,26 @@ class PrismaGatingWorkspace(QWidget):
             self._gate_tree_model.add_gate(gate_node)
             if node.children:
                 self._populate_tree(node.children, parent_id=node.gate_name)
+
+    def _dedupe_hierarchy_nodes(
+        self,
+        nodes: List[GateHierarchyNode],
+    ) -> List[GateHierarchyNode]:
+        """Supprime les doublons de hiérarchie par clé (gate_name, gate_path)."""
+        seen: set[Tuple[str, Tuple[str, ...]]] = set()
+
+        def _walk(items: List[GateHierarchyNode]) -> List[GateHierarchyNode]:
+            result: List[GateHierarchyNode] = []
+            for item in items:
+                key = (str(item.gate_name), tuple(item.gate_path))
+                if key in seen:
+                    continue
+                seen.add(key)
+                item.children = _walk(item.children)
+                result.append(item)
+            return result
+
+        return _walk(nodes)
 
     # ------------------------------------------------------------------
     # Slots contrôles
@@ -1179,7 +1228,9 @@ class PrismaGatingWorkspace(QWidget):
         # Ne pas utiliser _selected_transform() qui peut retourner None avant le 1er apply
         transform_id = self._active_transform_id
         # comp_matrix_id : seulement si checkbox cochée
-        comp_id: Optional[str] = self._selected_comp() if self._chk_enable_comp.isChecked() else None
+        comp_id: Optional[str] = (
+            self._selected_comp() if self._chk_enable_comp.isChecked() else None
+        )
 
         gate_name: Optional[str] = None
         gate_path: Optional[Tuple[str, ...]] = None
@@ -1233,7 +1284,8 @@ class PrismaGatingWorkspace(QWidget):
             else:
                 _logger.warning(
                     "Canal X '%s' absent du DataFrame. Colonnes: %s",
-                    x_ch, list(df.columns)[:10],
+                    x_ch,
+                    list(df.columns)[:10],
                 )
                 return
 
@@ -1328,6 +1380,11 @@ class PrismaGatingWorkspace(QWidget):
         if idx >= 0:
             self._combo_population.setCurrentIndex(idx)
         self._refresh_canvas()
+        self._ensure_population_panel(self._current_gate_node)
+
+    def _on_population_index_changed(self, _index: int) -> None:
+        """Slot robuste: résout la population depuis l'index du combo."""
+        self._on_population_changed(self._combo_population.currentText())
 
     def _on_population_changed(self, population: str) -> None:
         """Mémorise la population active pour préserver le contexte lors des changements d'axes."""
@@ -1339,6 +1396,8 @@ class PrismaGatingWorkspace(QWidget):
         paths = self._engine.find_gate_paths(population)
         self._current_gate_node = (population, *paths[0]) if paths else (population,)
         self._refresh_canvas()
+        # UX demandée : créer automatiquement un graphe dédié à la population choisie.
+        self._ensure_population_panel(self._current_gate_node)
 
     def _on_axes_changed(self, _index: int) -> None:
         """Re-trace la même population active avec les nouveaux axes."""
@@ -1408,10 +1467,16 @@ class PrismaGatingWorkspace(QWidget):
         xform_ref = self._selected_transform()
         _logger.debug(
             "create_polygon_gate '%s' gate_path=%s x=%s y=%s transform_ref=%s vertices[0]=%s",
-            name.strip(), gate_path, x_channel, y_channel, xform_ref,
+            name.strip(),
+            gate_path,
+            x_channel,
+            y_channel,
+            xform_ref,
             vertices[0] if vertices else None,
         )
-        print(f"[WORKSPACE] PolygonGate '{name.strip()}': transform_ref={xform_ref}, gate_path={gate_path}, vertices[0]={vertices[0] if vertices else None}")
+        print(
+            f"[WORKSPACE] PolygonGate '{name.strip()}': transform_ref={xform_ref}, gate_path={gate_path}, vertices[0]={vertices[0] if vertices else None}"
+        )
         try:
             self._engine.create_polygon_gate_from_vertices(
                 name.strip(),
@@ -1421,6 +1486,10 @@ class PrismaGatingWorkspace(QWidget):
                 vertices,
                 transform_ref=xform_ref,
             )
+            # Affichage immédiat pour feedback visuel, avant refresh global.
+            verts = [(float(v[0]), float(v[1])) for v in vertices if len(v) >= 2]
+            if verts:
+                self._canvas.add_gate_overlay(name.strip(), verts, label=name.strip())
             self._post_gate_created(new_gate_name=name.strip())
         except PrismaEngineError as exc:
             self._show_error(str(exc))
@@ -1457,6 +1526,22 @@ class PrismaGatingWorkspace(QWidget):
                 y_max,
                 transform_ref=xform_ref,
             )
+            # Affichage immédiat pour feedback visuel (1D/2D).
+            if y_channel:
+                verts = [
+                    (float(x_min), float(y_min)),
+                    (float(x_max), float(y_min)),
+                    (float(x_max), float(y_max)),
+                    (float(x_min), float(y_max)),
+                ]
+            else:
+                verts = [
+                    (float(x_min), 0.0),
+                    (float(x_max), 0.0),
+                    (float(x_max), 1.0),
+                    (float(x_min), 1.0),
+                ]
+            self._canvas.add_gate_overlay(name.strip(), verts, label=name.strip())
             self._post_gate_created(new_gate_name=name.strip())
         except PrismaEngineError as exc:
             self._show_error(str(exc))
@@ -1510,8 +1595,18 @@ class PrismaGatingWorkspace(QWidget):
             return
         try:
             paths = self._engine.find_gate_paths(gate_id)
-            gate_path = paths[0] if paths else None
-            self._engine.remove_gate(gate_id, gate_path=gate_path)
+            if not paths:
+                return
+
+            # Dédoublonnage défensif: si plusieurs occurrences partagent le même nom,
+            # on les retire avant de recréer la gate à son chemin principal.
+            gate_path = paths[0]
+            for p in reversed(paths):
+                try:
+                    self._engine.remove_gate(gate_id, gate_path=p)
+                except Exception:
+                    pass
+
             xform_ref = self._selected_transform()
             self._engine.create_polygon_gate_from_vertices(
                 gate_name=gate_id,
@@ -1527,15 +1622,17 @@ class PrismaGatingWorkspace(QWidget):
 
     def _on_add_panel(self) -> None:
         """Ajoute un nouveau PlotWidgetPanel dans le Worksheet pour la population active."""
+        self._create_panel_for_gate_node(self._current_gate_node)
+
+    def _create_panel_for_gate_node(self, gate_node: Tuple[str, ...]) -> None:
+        """Crée un panneau de plot dédié à une population donnée."""
         try:
-            mapping = self._engine.get_channel_marker_mapping(
-                sample_id=self._current_sample_id()
-            )
+            mapping = self._engine.get_channel_marker_mapping(sample_id=self._current_sample_id())
         except Exception:
             mapping = {}
         panel = PlotWidgetPanel(
             engine=self._engine,
-            gate_node=self._current_gate_node,
+            gate_node=gate_node,
             channel_mapping=mapping,
             active_transform_id=self._active_transform_id,
             active_comp_id=self._selected_comp(),
@@ -1546,7 +1643,37 @@ class PrismaGatingWorkspace(QWidget):
         panel.canvas.quadrantGateCompleted.connect(self._on_quadrant_gate)
         panel.canvas.gateModified.connect(self._on_gate_modified)
         self._worksheet.add_panel(panel)
+
+        # Synchroniser les axes du nouveau panneau avec les sélections globales courantes.
+        try:
+            x_ch = self._selected_axis_channel(self._combo_x)
+            y_ch = self._selected_axis_channel(self._combo_y)
+            x_idx = panel._combo_x.findData(x_ch)
+            if x_idx >= 0:
+                panel._combo_x.setCurrentIndex(x_idx)
+            y_idx = panel._combo_y.findData(y_ch)
+            if y_idx >= 0:
+                panel._combo_y.setCurrentIndex(y_idx)
+        except Exception:
+            pass
+
         panel._refresh()
+
+    def _ensure_population_panel(self, gate_node: Tuple[str, ...]) -> None:
+        """Garantit un seul panneau par population (évite les doublons visuels)."""
+        if not gate_node or gate_node[0].lower() == "root":
+            return
+
+        for panel in self._worksheet.panels():
+            panel_gate_node = getattr(panel, "_gate_node", None)
+            if panel_gate_node == gate_node:
+                try:
+                    panel._refresh()
+                except Exception:
+                    pass
+                return
+
+        self._create_panel_for_gate_node(gate_node)
 
     def _on_worksheet_gate_created(self, gate_name: str) -> None:
         """Slot : gate créée dans n'importe quel panneau → rebuild arbre + refresh tous panneaux."""
@@ -1560,14 +1687,27 @@ class PrismaGatingWorkspace(QWidget):
     def _post_gate_created(self, new_gate_name: Optional[str] = None) -> None:
         """
         Actions après création d'une gate :
+          0. Relancer l'analyse uniquement ici (hors boucle de rendu)
           1. Rebuild arbre
           2. Auto-sélectionner la nouvelle gate si nom fourni
           3. Refresh canvas sur la gate parente (contexte courant conservé)
         """
+        analysis_error: Optional[Exception] = None
+        try:
+            self._engine.analyze(sample_id=self._current_sample_id(), use_mp=False, verbose=False)
+        except Exception as exc:
+            analysis_error = exc
+            _logger.warning("_post_gate_created: analyze ponctuelle échouée: %s", exc)
+
         self._refresh_tree()
         self._update_statistics()
         # Sélectionner la gate nouvellement créée dans l'arbre et dans le combo population
         if new_gate_name:
+            paths_new = self._engine.find_gate_paths(new_gate_name)
+            self._current_gate_node = (
+                (new_gate_name, *paths_new[0]) if paths_new else (new_gate_name,)
+            )
+
             idx = self._combo_population.findText(new_gate_name)
             if idx >= 0:
                 self._combo_population.blockSignals(True)
@@ -1578,9 +1718,36 @@ class PrismaGatingWorkspace(QWidget):
             for row in range(model.rowCount()):
                 idx_tree = model.index(row, 0)
                 node = idx_tree.data(Qt.UserRole)
-                if node and getattr(node, 'gate_id', None) == new_gate_name:
+                if node and getattr(node, "gate_id", None) == new_gate_name:
                     self._tree_view.setCurrentIndex(idx_tree)
                     break
+
+            # Validation post-analyse : vérifier que la gate retourne bien un masque.
+            if analysis_error is None:
+                try:
+                    paths = self._engine.find_gate_paths(new_gate_name)
+                    gate_path = paths[0] if paths else None
+                    mask = self._engine.get_gate_membership(
+                        new_gate_name,
+                        gate_path=gate_path,
+                        sample_id=self._current_sample_id(),
+                    )
+                    n_pos = int(np.asarray(mask, dtype=bool).sum())
+                    _logger.info("Gate '%s' validée: %d événements", new_gate_name, n_pos)
+                except Exception as exc:
+                    _logger.warning(
+                        "Validation membership gate '%s' échouée: %s",
+                        new_gate_name,
+                        exc,
+                    )
+
+            self._ensure_population_panel(self._current_gate_node)
+
+        if analysis_error is not None:
+            self._show_error(
+                "Gate créée mais analyse FlowKit échouée. "
+                f"La population peut rester vide tant que l'analyse ne passe pas.\n\nDétail: {analysis_error}"
+            )
         self._refresh_canvas()
 
     # ------------------------------------------------------------------

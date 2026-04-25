@@ -112,6 +112,8 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         self._gate_overlays: Dict[str, pg.PlotDataItem] = {}
         # ROI draggables (gate_id → ROI item)
         self._gate_rois: Dict[str, object] = {}
+        # Labels texte des gates (gate_id -> TextItem)
+        self._gate_labels: Dict[str, pg.TextItem] = {}
 
         # état dessin polygon
         self._poly_vertices: List[Tuple[float, float]] = []
@@ -127,6 +129,7 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         # état gate 1D (LinearRegionItem — histogramme uniquement)
         self._region_1d: Optional[pg.LinearRegionItem] = None
         self._region_1d_gate_name: str = "Gate1D"
+        self._region_1d_signal_name: Optional[str] = None
 
         self._setup_plot()
 
@@ -182,14 +185,16 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         if x_channel not in df.columns or y_channel not in df.columns:
             _logger.error(
                 "set_data_2d: canaux absents x='%s' y='%s'. Disponibles: %s",
-                x_channel, y_channel, list(df.columns)[:10],
+                x_channel,
+                y_channel,
+                list(df.columns)[:10],
             )
             return
 
         # FIX BUG AXES : nettoyer TOUTES les ROI quand axes/données changent.
         # Les objets ROI PyQtGraph stockent des coords dans l'espace de l'ancien plot ;
         # les laisser en place avec de nouvelles dimensions produit 0 events ou crash.
-        axes_changed = (x_channel != self._x_channel or y_channel != self._y_channel)
+        axes_changed = x_channel != self._x_channel or y_channel != self._y_channel
         if axes_changed:
             self.clear_gate_overlays()
             self._cancel_current_drawing()
@@ -208,9 +213,7 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             pop_color_raw = df["Population_Color"].to_numpy(dtype=object).flatten()
 
         if xd.shape[0] != yd.shape[0]:
-            _logger.error(
-                "set_data_2d shape mismatch: x=%d y=%d", xd.shape[0], yd.shape[0]
-            )
+            _logger.error("set_data_2d shape mismatch: x=%d y=%d", xd.shape[0], yd.shape[0])
             return
 
         # Masque valide : exclut NaN, Inf et valeurs aberrantes (>1e9 = artefact transform)
@@ -236,8 +239,11 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         if gated_mask is not None:
             gated_mask = np.asarray(gated_mask, dtype=bool).flatten()
             if gated_mask.shape[0] != xd.shape[0]:
-                _logger.warning("set_data_2d: gated_mask shape %d != data %d, ignoré",
-                                gated_mask.shape[0], xd.shape[0])
+                _logger.warning(
+                    "set_data_2d: gated_mask shape %d != data %d, ignoré",
+                    gated_mask.shape[0],
+                    xd.shape[0],
+                )
                 gated_mask = None
 
         # --- Sous-échantillonnage adaptatif ---
@@ -263,10 +269,16 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             if pop_color_raw.shape[0] != n_pts:
                 _logger.debug(
                     "set_data_2d: Population_Color shape %d != pts %d — tronqué",
-                    pop_color_raw.shape[0], n_pts,
+                    pop_color_raw.shape[0],
+                    n_pts,
                 )
-                pop_color_raw = pop_color_raw[:n_pts] if pop_color_raw.shape[0] > n_pts \
-                    else np.concatenate([pop_color_raw, np.full(n_pts - pop_color_raw.shape[0], "#506070")])
+                pop_color_raw = (
+                    pop_color_raw[:n_pts]
+                    if pop_color_raw.shape[0] > n_pts
+                    else np.concatenate(
+                        [pop_color_raw, np.full(n_pts - pop_color_raw.shape[0], "#506070")]
+                    )
+                )
             colors = [pg.mkColor(str(c)) for c in pop_color_raw]
         elif density_coloring:
             colors = self._compute_density_colors(xd, yd)
@@ -299,9 +311,7 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         self.getPlotItem().setLabel("bottom", self._x_label or x_channel)
         self.getPlotItem().setLabel("left", self._y_label or y_channel)
         self.autoRange()
-        _logger.debug(
-            "set_data_2d: %d pts tracés (%s vs %s)", len(xd), x_channel, y_channel
-        )
+        _logger.debug("set_data_2d: %d pts tracés (%s vs %s)", len(xd), x_channel, y_channel)
 
     def set_data_1d(
         self,
@@ -318,8 +328,9 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             n_bins:  Nombre de bins.
         """
         if channel not in df.columns:
-            _logger.error("set_data_1d: canal absent '%s'. Disponibles: %s",
-                          channel, list(df.columns)[:10])
+            _logger.error(
+                "set_data_1d: canal absent '%s'. Disponibles: %s", channel, list(df.columns)[:10]
+            )
             return
 
         self._x_channel = channel
@@ -329,6 +340,8 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         xd = df[channel].to_numpy(dtype=np.float64).flatten()
         xd = xd[np.isfinite(xd) & (np.abs(xd) < 1e9)]
         xd = xd.astype(np.float32)
+        self._xdata = xd
+        self._ydata = np.array([], dtype=np.float32)
 
         counts, edges = np.histogram(xd, bins=n_bins)
         width = edges[1] - edges[0]
@@ -487,7 +500,13 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             pen=pen,
             movable=True,
         )
-        self._region_1d.sigRegionChangeFinished.connect(self._on_1d_region_finished)
+        self._region_1d_signal_name = None
+        if hasattr(self._region_1d, "sigRegionChangeFinished"):
+            self._region_1d.sigRegionChangeFinished.connect(self._on_1d_region_finished)
+            self._region_1d_signal_name = "sigRegionChangeFinished"
+        elif hasattr(self._region_1d, "sigRegionChanged"):
+            self._region_1d.sigRegionChanged.connect(self._on_1d_region_finished)
+            self._region_1d_signal_name = "sigRegionChanged"
         self.addItem(self._region_1d)
         _logger.debug("LinearRegionItem 1D activé pour gate '%s'", gate_name)
 
@@ -495,11 +514,15 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         """Retire le LinearRegionItem 1D sans émettre de signal."""
         if self._region_1d is not None:
             try:
-                self._region_1d.sigRegionChangeFinished.disconnect(self._on_1d_region_finished)
+                if self._region_1d_signal_name == "sigRegionChangeFinished":
+                    self._region_1d.sigRegionChangeFinished.disconnect(self._on_1d_region_finished)
+                elif self._region_1d_signal_name == "sigRegionChanged":
+                    self._region_1d.sigRegionChanged.disconnect(self._on_1d_region_finished)
             except TypeError:
                 pass
             self.removeItem(self._region_1d)
             self._region_1d = None
+            self._region_1d_signal_name = None
 
     def _on_1d_region_finished(self) -> None:
         """
@@ -512,7 +535,9 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         if self._region_1d is None:
             return
 
-        x_min, x_max = self._region_1d.getRegion()
+        left, right = self._region_1d.getRegion()
+        x_min = float(min(left, right))
+        x_max = float(max(left, right))
         gate_name = self._region_1d_gate_name
         x_ch = self._x_channel
 
@@ -560,28 +585,58 @@ class InteractiveGatingCanvas(pg.PlotWidget):
 
         if draggable and self._y_channel:
             # ROI polygon draggable — fermeture automatique (closed=True)
-            roi = pg.PolyLineROI(
-                positions=list(vertices),
-                closed=True,
-                pen=pen,
-                handlePen=pg.mkPen(color=color, width=1),
-                handleSize=7,
-                movable=True,
-            )
-            roi.setBrush(pg.mkBrush(fill_color))
+            roi = None
+            try:
+                roi = pg.PolyLineROI(
+                    positions=list(vertices),
+                    closed=True,
+                    pen=pen,
+                    handlePen=pg.mkPen(color=color, width=1),
+                    movable=True,
+                )
+            except TypeError:
+                # Compat pyqtgraph anciens: handlePen/kwargs partiels non supportés.
+                roi = pg.PolyLineROI(
+                    positions=list(vertices),
+                    closed=True,
+                    pen=pen,
+                    movable=True,
+                )
+
+            # Compat pyqtgraph: certaines versions n'exposent pas setBrush sur PolyLineROI.
+            if hasattr(roi, "setBrush"):
+                try:
+                    roi.setBrush(pg.mkBrush(fill_color))
+                except Exception:
+                    pass
 
             def _make_handler(gid):
                 def _on_roi_changed(r):
                     try:
-                        new_verts = [(float(h.pos().x() + r.pos().x()),
-                                      float(h.pos().y() + r.pos().y()))
-                                     for h in r.getHandles()]
+                        new_verts: List[Tuple[float, float]] = []
+                        r_pos = r.pos()
+                        for h in r.getHandles():
+                            h_item = h
+                            if isinstance(h, dict):
+                                h_item = h.get("item", h)
+                            if not hasattr(h_item, "pos"):
+                                continue
+                            p = h_item.pos()
+                            new_verts.append((float(p.x() + r_pos.x()), float(p.y() + r_pos.y())))
+                        if not new_verts:
+                            return
                         self.gateModified.emit(gid, self._x_channel, self._y_channel, new_verts)
                     except Exception:
                         pass
+
                 return _on_roi_changed
 
-            roi.sigRegionChangeFinished.connect(_make_handler(gate_id))
+            handler = _make_handler(gate_id)
+            if hasattr(roi, "sigRegionChangeFinished"):
+                roi.sigRegionChangeFinished.connect(handler)
+            elif hasattr(roi, "sigRegionChanged"):
+                # Fallback versions anciennes.
+                roi.sigRegionChanged.connect(handler)
             self.addItem(roi)
             self._gate_rois[gate_id] = roi
             self._gate_overlays[gate_id] = roi  # same ref pour clear_gate_overlays
@@ -599,10 +654,17 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             text = pg.TextItem(label, color=color, anchor=(0.5, 0.5))
             text.setPos(cx, cy)
             self.addItem(text)
+            self._gate_labels[gate_id] = text
 
     def remove_gate_overlay(self, gate_id: str) -> None:
         """Retire l'overlay visuel d'une gate (ROI ou PlotDataItem)."""
         self._gate_rois.pop(gate_id, None)
+        label_item = self._gate_labels.pop(gate_id, None)
+        if label_item is not None:
+            try:
+                self.removeItem(label_item)
+            except Exception:
+                pass
         item = self._gate_overlays.pop(gate_id, None)
         if item is not None:
             try:
@@ -617,8 +679,14 @@ class InteractiveGatingCanvas(pg.PlotWidget):
                 self.removeItem(item)
             except Exception:
                 pass
+        for label_item in list(self._gate_labels.values()):
+            try:
+                self.removeItem(label_item)
+            except Exception:
+                pass
         self._gate_overlays.clear()
         self._gate_rois.clear()
+        self._gate_labels.clear()
 
     def reload_gate_overlays_from_engine(
         self,

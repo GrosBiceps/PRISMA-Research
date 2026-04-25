@@ -416,7 +416,11 @@ class PrismaFlowEngine:
                 except Exception:
                     meta = dict(getattr(sample, "metadata", {}) or {})
                 spill_key = next(
-                    (k for k in meta if str(k).strip().lower() in {"spill", "spillover", "$spill", "$spillover"}),
+                    (
+                        k
+                        for k in meta
+                        if str(k).strip().lower() in {"spill", "spillover", "$spill", "$spillover"}
+                    ),
                     None,
                 )
                 if spill_key is not None:
@@ -1132,8 +1136,12 @@ class PrismaFlowEngine:
         self._validate_gate_name(gate_name, gate_path)
         self._validate_channels(x_channel, y_channel)
 
-        dim_x = fk.Dimension(x_channel, compensation_ref=comp_ref, transformation_ref=transform_ref)
-        dim_y = fk.Dimension(y_channel, compensation_ref=comp_ref, transformation_ref=transform_ref)
+        # Si la gate existe déjà au même path, on la remplace explicitement
+        # pour éviter GateTreeError: Gate already exists.
+        self._replace_existing_gate_if_present(gate_name, gate_path, sample_id=sample_id)
+
+        dim_x = self._build_dimension(x_channel, comp_ref=comp_ref, transform_ref=transform_ref)
+        dim_y = self._build_dimension(y_channel, comp_ref=comp_ref, transform_ref=transform_ref)
         gate = fk_gates.PolygonGate(gate_name, [dim_x, dim_y], vertices)
         self._as_session().add_gate(gate, gate_path, sample_id=sample_id)
         _logger.info("PolygonGate : %s @ %s (sample=%s)", gate_name, gate_path, sample_id)
@@ -1163,28 +1171,31 @@ class PrismaFlowEngine:
 
         is_1d = not y_channel or (y_min == 0.0 and y_max == 0.0 and not y_channel)
 
+        # Remplacement idempotent de la gate existante sur le même chemin.
+        self._replace_existing_gate_if_present(gate_name, gate_path, sample_id=sample_id)
+
         if is_1d:
-            dim_x = fk.Dimension(
+            dim_x = self._build_dimension(
                 x_channel,
-                compensation_ref=comp_ref,
-                transformation_ref=transform_ref,
+                comp_ref=comp_ref,
+                transform_ref=transform_ref,
                 range_min=x_min,
                 range_max=x_max,
             )
             gate = fk_gates.RectangleGate(gate_name, [dim_x])
         else:
             self._validate_channels(x_channel, y_channel)
-            dim_x = fk.Dimension(
+            dim_x = self._build_dimension(
                 x_channel,
-                compensation_ref=comp_ref,
-                transformation_ref=transform_ref,
+                comp_ref=comp_ref,
+                transform_ref=transform_ref,
                 range_min=x_min,
                 range_max=x_max,
             )
-            dim_y = fk.Dimension(
+            dim_y = self._build_dimension(
                 y_channel,
-                compensation_ref=comp_ref,
-                transformation_ref=transform_ref,
+                comp_ref=comp_ref,
+                transform_ref=transform_ref,
                 range_min=y_min,
                 range_max=y_max,
             )
@@ -1210,8 +1221,10 @@ class PrismaFlowEngine:
         self._validate_gate_name(gate_name, gate_path)
         self._validate_channels(x_channel, y_channel)
 
-        dim_x = fk.Dimension(x_channel, compensation_ref=comp_ref, transformation_ref=transform_ref)
-        dim_y = fk.Dimension(y_channel, compensation_ref=comp_ref, transformation_ref=transform_ref)
+        self._replace_existing_gate_if_present(gate_name, gate_path, sample_id=sample_id)
+
+        dim_x = self._build_dimension(x_channel, comp_ref=comp_ref, transform_ref=transform_ref)
+        dim_y = self._build_dimension(y_channel, comp_ref=comp_ref, transform_ref=transform_ref)
         gate = fk_gates.EllipsoidGate(
             gate_name,
             [dim_x, dim_y],
@@ -1239,10 +1252,18 @@ class PrismaFlowEngine:
         self._validate_gate_name(gate_name, gate_path)
         self._validate_channels(x_channel, y_channel)
 
+        self._replace_existing_gate_if_present(gate_name, gate_path, sample_id=sample_id)
+
         div_x_id = f"{gate_name}_div_x"
         div_y_id = f"{gate_name}_div_y"
-        div_x = fk.QuadrantDivider(div_x_id, x_channel, comp_ref, [x_threshold], transform_ref)
-        div_y = fk.QuadrantDivider(div_y_id, y_channel, comp_ref, [y_threshold], transform_ref)
+        x_comp_ref, x_transform_ref = self._resolve_dimension_refs(
+            x_channel, comp_ref, transform_ref
+        )
+        y_comp_ref, y_transform_ref = self._resolve_dimension_refs(
+            y_channel, comp_ref, transform_ref
+        )
+        div_x = fk.QuadrantDivider(div_x_id, x_channel, x_comp_ref, [x_threshold], x_transform_ref)
+        div_y = fk.QuadrantDivider(div_y_id, y_channel, y_comp_ref, [y_threshold], y_transform_ref)
 
         q_pp = fk_gates.Quadrant(
             f"{gate_name}_Q1_PosPos",
@@ -1536,22 +1557,6 @@ class PrismaFlowEngine:
         gate_name = str(gate_node[0])
         gate_path = tuple(gate_node[1:]) if len(gate_node) > 1 else None
 
-        # get_gate_membership exige que analyze_samples() ait été appelé
-        # (_results_lut[sid] doit exister). On l'exécute automatiquement si absent.
-        try:
-            self._backend.get_gate_membership(sid, gate_name, gate_path=gate_path)
-        except KeyError:
-            _logger.debug("_results_lut absent pour %s — analyze_samples() auto", sid)
-            try:
-                self._backend.analyze_samples(sample_id=sid, verbose=False)
-                _logger.debug("analyze_samples(%s) OK", sid)
-                print(f"[ENGINE] analyze_samples({sid}) exécuté automatiquement")
-            except Exception as exc_analyze:
-                _logger.warning("analyze_samples auto échoué : %s — population complète", exc_analyze)
-                return full_df
-        except Exception:
-            pass  # sera re-tenté ci-dessous avec log complet
-
         try:
             mask = self._backend.get_gate_membership(sid, gate_name, gate_path=gate_path)
             mask_flat = np.asarray(mask, dtype=bool).flatten()
@@ -1561,10 +1566,14 @@ class PrismaFlowEngine:
                 return filtered
             _logger.warning(
                 "Shape mismatch masque %d vs df %d pour gate '%s' — population complète",
-                mask_flat.shape[0], full_df.shape[0], gate_name,
+                mask_flat.shape[0],
+                full_df.shape[0],
+                gate_name,
             )
         except Exception as exc:
-            _logger.warning("get_gate_membership échoué pour '%s': %s — population complète", gate_name, exc)
+            _logger.warning(
+                "get_gate_membership échoué pour '%s': %s — population complète", gate_name, exc
+            )
 
         return full_df
 
@@ -1595,8 +1604,14 @@ class PrismaFlowEngine:
             DataFrame avec colonne 'Population_Color' (str HEX).
         """
         _CHILD_COLORS = [
-            "#5BAAFF", "#39FF8A", "#FF9B3D", "#FF3D6E",
-            "#FFE032", "#7B52FF", "#7EC8E3", "#FF6BFF",
+            "#5BAAFF",
+            "#39FF8A",
+            "#FF9B3D",
+            "#FF3D6E",
+            "#FFE032",
+            "#7B52FF",
+            "#7EC8E3",
+            "#FF6BFF",
         ]
         _DEFAULT_COLOR = "#506070"
 
@@ -1619,9 +1634,9 @@ class PrismaFlowEngine:
         children: List[str] = []
         if parent_name and parent_name.lower() != "root":
             try:
-                children = list(self._backend.get_child_gate_ids(
-                    parent_name, gate_path=parent_path
-                ))
+                children = list(
+                    self._backend.get_child_gate_ids(parent_name, gate_path=parent_path)
+                )
             except Exception as exc:
                 _logger.debug("get_colored_population: get_child_gate_ids échoué: %s", exc)
 
@@ -1650,15 +1665,6 @@ class PrismaFlowEngine:
         colors = np.full(n_parent, _DEFAULT_COLOR, dtype=object)
 
         if children:
-            # analyze_samples auto si nécessaire
-            try:
-                self._backend.get_gate_membership(sid, children[0])
-            except KeyError:
-                try:
-                    self._backend.analyze_samples(sample_id=sid, verbose=False)
-                except Exception as exc_a:
-                    _logger.warning("get_colored_population: analyze auto échoué: %s", exc_a)
-
             parent_indices = np.where(parent_mask_full)[0]
 
             for i, child_name in enumerate(children):
@@ -1717,7 +1723,9 @@ class PrismaFlowEngine:
                 _logger.warning("[PIPELINE] apply_compensation échoué (%s): %s", matrix_id, exc)
                 print(f"[ENGINE] WARN compensation échouée ({matrix_id}): {exc}")
         else:
-            print(f"[ENGINE] Pas de compensation (matrix_id={matrix_id}, is_workspace={self._is_workspace()})")
+            print(
+                f"[ENGINE] Pas de compensation (matrix_id={matrix_id}, is_workspace={self._is_workspace()})"
+            )
 
         # --- Étape 2 : Transformation native FlowKit ---
         xform_id = transform_id or (next(iter(self._transform_specs), None))
@@ -1734,7 +1742,9 @@ class PrismaFlowEngine:
                 _logger.warning("[PIPELINE] apply_transform échoué (%s): %s", xform_id, exc)
                 print(f"[ENGINE] WARN transform échouée ({xform_id}): {exc}")
         else:
-            print(f"[ENGINE] Pas de transformation (xform_id={xform_id}, is_workspace={self._is_workspace()})")
+            print(
+                f"[ENGINE] Pas de transformation (xform_id={xform_id}, is_workspace={self._is_workspace()})"
+            )
 
         # --- Étape 3 : Lire dans le meilleur espace disponible ---
         for source in ("xform", "comp", "raw"):
@@ -1743,8 +1753,11 @@ class PrismaFlowEngine:
                 if df is not None and not df.empty:
                     df.columns = [str(c).strip() for c in df.columns]
                     # Log diagnostique : min/max sur 2 premiers canaux fluoro
-                    fluoro_cols = [c for c in df.columns
-                                   if all(t not in str(c).upper() for t in ("FSC","SSC","TIME"))]
+                    fluoro_cols = [
+                        c
+                        for c in df.columns
+                        if all(t not in str(c).upper() for t in ("FSC", "SSC", "TIME"))
+                    ]
                     if fluoro_cols:
                         col0 = fluoro_cols[0]
                         v = df[col0].dropna()
@@ -2088,9 +2101,7 @@ class PrismaFlowEngine:
         except (BooleanGateRefMissingError, PrismaEngineError):
             raise
         except Exception as exc:
-            raise PrismaEngineError(
-                f"Création BooleanGate '{gate_name}' échouée : {exc}"
-            ) from exc
+            raise PrismaEngineError(f"Création BooleanGate '{gate_name}' échouée : {exc}") from exc
 
     # ------------------------------------------------------------------
     # K. Extensions PRISMA
@@ -2310,3 +2321,92 @@ class PrismaFlowEngine:
             raise GateParentMissingError(
                 f"Gate parente introuvable : {parent_name!r} @ {parent_ancestors}"
             )
+
+    def _channel_is_untransformed(self, channel_name: str) -> bool:
+        """
+        Détecte les canaux classiquement non transformés (FSC/SSC/Time).
+
+        Ces canaux doivent rester en coordonnées raw dans les Dimensions FlowKit,
+        sinon les gates 2D mixtes (raw vs logicle) sélectionnent 0 événements.
+        """
+        ch = str(channel_name).upper()
+        return any(token in ch for token in ("FSC", "SSC", "TIME"))
+
+    def _resolve_dimension_refs(
+        self,
+        channel_name: str,
+        comp_ref: str,
+        transform_ref: Optional[str],
+    ) -> Tuple[str, Optional[str]]:
+        """Retourne (comp_ref, transform_ref) adapté à un canal donné."""
+        if self._channel_is_untransformed(channel_name):
+            return "uncompensated", None
+        return comp_ref, transform_ref
+
+    def _build_dimension(
+        self,
+        channel_name: str,
+        comp_ref: str,
+        transform_ref: Optional[str],
+        range_min: Optional[float] = None,
+        range_max: Optional[float] = None,
+    ) -> Any:
+        """Construit une fk.Dimension robuste pour canaux mixtes raw/transformés."""
+        effective_comp_ref, effective_transform_ref = self._resolve_dimension_refs(
+            channel_name,
+            comp_ref,
+            transform_ref,
+        )
+        return fk.Dimension(
+            channel_name,
+            compensation_ref=effective_comp_ref,
+            transformation_ref=effective_transform_ref,
+            range_min=range_min,
+            range_max=range_max,
+        )
+
+    def _replace_existing_gate_if_present(
+        self,
+        gate_name: str,
+        gate_path: Tuple[str, ...],
+        sample_id: Optional[str] = None,
+    ) -> None:
+        """Supprime la gate existante au même path pour permettre un overwrite sûr."""
+        session = self._as_session()
+        try:
+            existing_gate = session.get_gate(gate_name, gate_path=gate_path)
+            if existing_gate is not None:
+                session.remove_gate(
+                    gate_name,
+                    gate_path=gate_path,
+                    sample_id=sample_id,
+                    keep_children=False,
+                )
+                _logger.debug("Gate remplacée : %s @ %s", gate_name, gate_path)
+        except Exception as exc:
+            # Les erreurs "gate absente" sont attendues au premier ajout.
+            if self._is_missing_gate_lookup_error(exc) or self._is_gate_tree_error(exc):
+                return
+            raise
+
+    def _is_gate_tree_error(self, exc: Exception) -> bool:
+        """Compatibilité FlowKit: détecte GateTreeError sans dépendre d'une API précise."""
+        exc_mod = getattr(fk, "exceptions", None)
+        gate_tree_err = getattr(exc_mod, "GateTreeError", None) if exc_mod is not None else None
+        if gate_tree_err is not None and isinstance(exc, gate_tree_err):
+            return True
+        return exc.__class__.__name__ == "GateTreeError"
+
+    def _is_missing_gate_lookup_error(self, exc: Exception) -> bool:
+        """Détecte les erreurs FlowKit indiquant qu'une gate n'existe pas encore."""
+        exc_mod = getattr(fk, "exceptions", None)
+        gate_ref_err = getattr(exc_mod, "GateReferenceError", None) if exc_mod is not None else None
+        if gate_ref_err is not None and isinstance(exc, gate_ref_err):
+            return True
+
+        exc_name = exc.__class__.__name__
+        if exc_name == "GateReferenceError":
+            return True
+
+        msg = str(exc).lower()
+        return "was not found in gating strategy" in msg or "not found" in msg
