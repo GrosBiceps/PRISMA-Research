@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from PyQt5.QtCore import Qt, QModelIndex, pyqtSignal
+from PyQt5.QtCore import Qt, QModelIndex, QEvent, pyqtSignal
 from PyQt5.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -164,6 +164,7 @@ class PlotWidgetPanel(QFrame):
 
     gateCreated = pyqtSignal(str)
     closeRequested = pyqtSignal()
+    activated = pyqtSignal()
 
     def __init__(
         self,
@@ -187,6 +188,7 @@ class PlotWidgetPanel(QFrame):
 
         self._build_ui()
         self._connect_signals()
+        self._canvas.installEventFilter(self)
 
     # ------ Construction UI -----------------------------------------------
 
@@ -329,8 +331,13 @@ class PlotWidgetPanel(QFrame):
         if comp_id is not None:
             self._active_comp_id = comp_id
         self._refresh()
-        if hasattr(self._canvas, "reload_gate_overlays_from_engine"):
+        # Comportement Kaluza-like : les panneaux enfants restent libres pour regating.
+        # Seul le panneau root recharge les overlays globaux depuis le moteur.
+        is_root_panel = bool(self._gate_node and str(self._gate_node[0]).lower() == "root")
+        if is_root_panel and hasattr(self._canvas, "reload_gate_overlays_from_engine"):
             self._canvas.reload_gate_overlays_from_engine(engine)
+        elif hasattr(self._canvas, "clear_gate_overlays"):
+            self._canvas.clear_gate_overlays()
 
     # ------ Slots gates ---------------------------------------------------
 
@@ -348,6 +355,22 @@ class PlotWidgetPanel(QFrame):
     @property
     def canvas(self) -> InteractiveGatingCanvas:
         return self._canvas
+
+    def set_active_visual(self, active: bool) -> None:
+        """Met en évidence le panneau actif pour le gating interactif."""
+        if active:
+            self.setStyleSheet("QFrame { border: 1px solid #5BAAFF; border-radius: 4px; }")
+        else:
+            self.setStyleSheet("")
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        self.activated.emit()
+        super().mousePressEvent(event)
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if watched is self._canvas and event.type() == QEvent.MouseButtonPress:
+            self.activated.emit()
+        return super().eventFilter(watched, event)
 
 
 # ---------------------------------------------------------------------------
@@ -378,23 +401,28 @@ class WorksheetArea(QScrollArea):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self._container = QWidget()
+        self._container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._grid = QGridLayout(self._container)
         self._grid.setContentsMargins(4, 4, 4, 4)
         self._grid.setSpacing(6)
+        for col in range(self._COLS):
+            self._grid.setColumnStretch(col, 1)
         self.setWidget(self._container)
 
         self._panels: List[PlotWidgetPanel] = []
+        self._active_panel: Optional[PlotWidgetPanel] = None
 
     # ------ API publique --------------------------------------------------
 
     def add_panel(self, panel: PlotWidgetPanel) -> None:
         """Ajoute un panneau dans la grille (gauche → droite, haut → bas)."""
-        idx = len(self._panels)
-        row, col = divmod(idx, self._COLS)
-        self._grid.addWidget(panel, row, col)
         self._panels.append(panel)
         panel.closeRequested.connect(lambda p=panel: self.remove_panel(p))
         panel.gateCreated.connect(self.gateCreated)
+        panel.activated.connect(lambda p=panel: self.set_active_panel(p))
+        if self._active_panel is None:
+            self.set_active_panel(panel)
+        self._relayout()
 
     def remove_panel(self, panel: PlotWidgetPanel) -> None:
         """Retire un panneau et réorganise la grille."""
@@ -403,13 +431,33 @@ class WorksheetArea(QScrollArea):
         self._panels.remove(panel)
         self._grid.removeWidget(panel)
         panel.deleteLater()
+        if self._active_panel is panel:
+            self._active_panel = None
+            if self._panels:
+                self.set_active_panel(self._panels[0])
         self._relayout()
+
+    def set_active_panel(self, panel: PlotWidgetPanel) -> None:
+        """Définit le panneau actif utilisé pour le mode dessin/gating."""
+        if panel not in self._panels:
+            return
+        self._active_panel = panel
+        for p in self._panels:
+            try:
+                p.set_active_visual(p is panel)
+            except Exception:
+                pass
+
+    def active_panel(self) -> Optional[PlotWidgetPanel]:
+        return self._active_panel
 
     def panels(self) -> List[PlotWidgetPanel]:
         return list(self._panels)
 
     def active_canvas(self) -> Optional[InteractiveGatingCanvas]:
-        """Retourne le canvas du premier panneau (compatibilité avec l'API workspace)."""
+        """Retourne le canvas du panneau actif (fallback: premier panneau)."""
+        if self._active_panel is not None:
+            return self._active_panel.canvas
         return self._panels[0].canvas if self._panels else None
 
     def refresh_all(
@@ -429,9 +477,17 @@ class WorksheetArea(QScrollArea):
 
     def _relayout(self) -> None:
         """Réorganise les panneaux restants dans la grille après suppression."""
+        # Toujours équilibrer les colonnes ; 1 seul panneau doit occuper toute la largeur.
+        for col in range(self._COLS):
+            self._grid.setColumnStretch(col, 1)
         for i, panel in enumerate(self._panels):
-            row, col = divmod(i, self._COLS)
-            self._grid.addWidget(panel, row, col)
+            if len(self._panels) == 1:
+                row, col, col_span = 0, 0, self._COLS
+            else:
+                row, col = divmod(i, self._COLS)
+                col_span = 1
+            self._grid.addWidget(panel, row, col, 1, col_span)
+            self._grid.setRowStretch(row, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1153,10 +1209,10 @@ class PrismaGatingWorkspace(QWidget):
                 name=node.gate_name,
                 parent_id=parent_id,
                 gate_type=node.gate_type,
+                flow_count=int(node.count),
+                flow_percent=float(node.pct_parent),
             )
             gate_node.mask = None  # comptes déjà dans node.count
-            # Hack : stocker le count dans un attribut custom
-            gate_node._fk_count = node.count  # type: ignore[attr-defined]
             self._gate_tree_model.add_gate(gate_node)
             if node.children:
                 self._populate_tree(node.children, parent_id=node.gate_name)
@@ -1318,7 +1374,14 @@ class PrismaGatingWorkspace(QWidget):
         self._last_canvas_axes = (x_ch, y_ch)
 
         # --- Overlays gates existantes ---
-        self._canvas.reload_gate_overlays_from_engine(self._engine)
+        # En mode multi-panel, on n'affiche pas les overlays globaux sur un panneau enfant.
+        is_root_context = bool(
+            self._current_gate_node and str(self._current_gate_node[0]).lower() == "root"
+        )
+        if is_root_context:
+            self._canvas.reload_gate_overlays_from_engine(self._engine)
+        elif hasattr(self._canvas, "clear_gate_overlays"):
+            self._canvas.clear_gate_overlays()
 
         # --- Statistiques live ---
         self._update_statistics()
@@ -1643,6 +1706,7 @@ class PrismaGatingWorkspace(QWidget):
         panel.canvas.quadrantGateCompleted.connect(self._on_quadrant_gate)
         panel.canvas.gateModified.connect(self._on_gate_modified)
         self._worksheet.add_panel(panel)
+        self._worksheet.set_active_panel(panel)
 
         # Synchroniser les axes du nouveau panneau avec les sélections globales courantes.
         try:
@@ -1667,6 +1731,7 @@ class PrismaGatingWorkspace(QWidget):
         for panel in self._worksheet.panels():
             panel_gate_node = getattr(panel, "_gate_node", None)
             if panel_gate_node == gate_node:
+                self._worksheet.set_active_panel(panel)
                 try:
                     panel._refresh()
                 except Exception:
@@ -2001,10 +2066,19 @@ class PrismaGatingWorkspace(QWidget):
 
     def _resolve_parent_path(self) -> Tuple[str, ...]:
         """
-        Déduit le gate_path parent depuis la sélection courante dans l'arbre.
+        Déduit le gate_path parent depuis le panneau actif (prioritaire)
+        puis depuis la sélection courante dans l'arbre.
 
         Si aucun nœud sélectionné → gate racine (tuple vide = 'root').
         """
+        active_panel = self._worksheet.active_panel()
+        if active_panel is not None:
+            panel_gate_node = getattr(active_panel, "_gate_node", ("root",))
+            if panel_gate_node and str(panel_gate_node[0]).lower() != "root":
+                parent_name = str(panel_gate_node[0])
+                parent_path = tuple(panel_gate_node[1:])
+                return parent_path + (parent_name,)
+
         index = self._tree_view.currentIndex()
         node: Optional[GateNode] = index.data(Qt.UserRole)
         if node is None:
@@ -2037,7 +2111,7 @@ class PrismaGatingWorkspace(QWidget):
         return c
 
     def _has_active_panel(self) -> bool:
-        return bool(self._worksheet.panels())
+        return self._worksheet.active_panel() is not None or bool(self._worksheet.panels())
 
     def closeEvent(self, event: object) -> None:
         """Émet le dernier contexte sauvegardé à la fermeture validée du workspace."""

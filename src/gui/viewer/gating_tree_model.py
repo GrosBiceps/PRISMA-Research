@@ -42,6 +42,7 @@ from PyQt5.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 # Nœud de l'arbre
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class GateNode:
     """
@@ -65,6 +66,8 @@ class GateNode:
     parent_id: Optional[str] = None
     gate_type: str = "polygon"
     source_pop: str = ""
+    flow_count: Optional[int] = None
+    flow_percent: Optional[float] = None
     children: List["GateNode"] = field(default_factory=list, repr=False)
 
     # Référence au parent (non sérialisée, injectée par le modèle)
@@ -73,6 +76,8 @@ class GateNode:
     @property
     def n_events(self) -> int:
         """Nombre d'événements positifs (sum du masque)."""
+        if self.flow_count is not None:
+            return int(self.flow_count)
         if self.mask is None:
             return 0
         return int(np.sum(self.mask))
@@ -87,6 +92,8 @@ class GateNode:
     @property
     def percent(self) -> float:
         """Pourcentage d'événements positifs dans la population source."""
+        if self.flow_percent is not None:
+            return float(self.flow_percent)
         if self.mask is None or len(self.mask) == 0:
             return 0.0
         if self._parent_node is not None and self._parent_node.mask is not None:
@@ -125,10 +132,10 @@ _NCOLS = 4
 _HEADERS = ["Gate", "Type", "N", "%"]
 
 _TYPE_COLORS: Dict[str, QColor] = {
-    "polygon":   QColor(100, 220, 120),
+    "polygon": QColor(100, 220, 120),
     "rectangle": QColor(100, 180, 255),
-    "quadrant":  QColor(255, 180,  80),
-    "root":      QColor(180, 180, 180),
+    "quadrant": QColor(255, 180, 80),
+    "root": QColor(180, 180, 180),
 }
 
 
@@ -219,14 +226,10 @@ class GatingTreeModel(QAbstractItemModel):
     # QAbstractItemModel — implémentation obligatoire
     # ------------------------------------------------------------------
 
-    def index(
-        self, row: int, column: int, parent: QModelIndex = QModelIndex()
-    ) -> QModelIndex:
+    def index(self, row: int, column: int, parent: QModelIndex = QModelIndex()) -> QModelIndex:
         if not self.hasIndex(row, column, parent):
             return QModelIndex()
-        parent_node: GateNode = (
-            parent.internalPointer() if parent.isValid() else self._root
-        )
+        parent_node: GateNode = parent.internalPointer() if parent.isValid() else self._root
         child = parent_node.child(row)
         if child is not None:
             return self.createIndex(row, column, child)
@@ -242,9 +245,7 @@ class GatingTreeModel(QAbstractItemModel):
         return self.createIndex(parent_node.row(), 0, parent_node)
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        parent_node: GateNode = (
-            parent.internalPointer() if parent.isValid() else self._root
-        )
+        parent_node: GateNode = parent.internalPointer() if parent.isValid() else self._root
         return parent_node.child_count()
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -285,11 +286,12 @@ class GatingTreeModel(QAbstractItemModel):
             return font
 
         if role == Qt.ToolTipRole:
+            n_total_display = self._format_n_total(node)
             return (
                 f"Gate: {node.name}\n"
                 f"ID: {node.gate_id}\n"
                 f"Type: {node.gate_type}\n"
-                f"N: {node.n_events:,} / {node.n_total:,}\n"
+                f"N: {node.n_events:,} / {n_total_display}\n"
                 f"%: {node.percent:.2f}"
             )
 
@@ -327,10 +329,16 @@ class GatingTreeModel(QAbstractItemModel):
         self._registry.pop(node.gate_id, None)
         self.endRemoveRows()
 
+    def _format_n_total(self, node: GateNode) -> str:
+        if node.mask is not None:
+            return f"{node.n_total:,}"
+        return "n/a"
+
 
 # ---------------------------------------------------------------------------
 # Délégué optionnel — badge de population %
 # ---------------------------------------------------------------------------
+
 
 class GatingTreeDelegate(QStyledItemDelegate):
     """
