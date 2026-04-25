@@ -110,12 +110,16 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         self._poly_vertices: List[Tuple[float, float]] = []
         self._poly_preview: Optional[pg.PlotDataItem] = None
 
-        # état dessin rectangle
+        # état dessin rectangle 2D
         self._rect_start: Optional[Tuple[float, float]] = None
         self._rect_preview: Optional[pg.LinearRegionItem] = None
 
         # état dessin quadrant (lignes croisées)
         self._quad_lines: List[pg.InfiniteLine] = []
+
+        # état gate 1D (LinearRegionItem — histogramme uniquement)
+        self._region_1d: Optional[pg.LinearRegionItem] = None
+        self._region_1d_gate_name: str = "Gate1D"
 
         self._setup_plot()
 
@@ -334,7 +338,98 @@ class InteractiveGatingCanvas(pg.PlotWidget):
     def cancel_drawing(self) -> None:
         """Annule le dessin en cours et revient en mode navigation."""
         self._cancel_current_drawing()
+        self.disable_1d_gate_drawing()
         self.set_draw_mode(DrawMode.NAVIGATE)
+
+    # ------------------------------------------------------------------
+    # CORRECTIF C5 : Gate 1D sur histogramme via LinearRegionItem
+    # ------------------------------------------------------------------
+
+    def enable_1d_gate_drawing(self, gate_name: str = "Gate1D") -> None:
+        """
+        Active un LinearRegionItem pour dessiner une gate 1D sur histogramme.
+
+        À utiliser UNIQUEMENT lorsque y_channel est vide (vue histogramme).
+        Si un y_channel est actif, lève un warning et ne fait rien.
+
+        Lorsque l'utilisateur relâche la région, émet rectangleGateCompleted
+        avec y_min=y_max=None encodés comme 0.0 (convention gate 1D).
+        Le workspace détecte cette convention pour créer une RectangleGate
+        à une dimension via fk.Dimension avec range_min/range_max.
+
+        Args:
+            gate_name: Nom de la gate qui sera transmis dans le signal.
+        """
+        if self._y_channel:
+            _logger.warning(
+                "enable_1d_gate_drawing() ignoré : y_channel='%s' actif. "
+                "Utilisez set_draw_mode(DrawMode.RECTANGLE) pour une gate 2D.",
+                self._y_channel,
+            )
+            return
+
+        if not self._x_channel:
+            _logger.warning("enable_1d_gate_drawing() : x_channel non défini.")
+            return
+
+        self.disable_1d_gate_drawing()
+        self._region_1d_gate_name = gate_name
+
+        # Estimer la plage de données pour positionner la région par défaut
+        if len(self._xdata) > 0:
+            x_lo = float(np.nanpercentile(self._xdata, 25))
+            x_hi = float(np.nanpercentile(self._xdata, 75))
+        else:
+            x_lo, x_hi = 0.0, 1000.0
+
+        pen = pg.mkPen(color=_GATE_DRAWING_COLOR, width=1.5)
+        brush = pg.mkBrush(color=(255, 200, 50, 35))
+
+        self._region_1d = pg.LinearRegionItem(
+            values=(x_lo, x_hi),
+            orientation="vertical",
+            brush=brush,
+            pen=pen,
+            movable=True,
+        )
+        self._region_1d.sigRegionChangeFinished.connect(self._on_1d_region_finished)
+        self.addItem(self._region_1d)
+        _logger.debug("LinearRegionItem 1D activé pour gate '%s'", gate_name)
+
+    def disable_1d_gate_drawing(self) -> None:
+        """Retire le LinearRegionItem 1D sans émettre de signal."""
+        if self._region_1d is not None:
+            try:
+                self._region_1d.sigRegionChangeFinished.disconnect(self._on_1d_region_finished)
+            except TypeError:
+                pass
+            self.removeItem(self._region_1d)
+            self._region_1d = None
+
+    def _on_1d_region_finished(self) -> None:
+        """
+        Slot : l'utilisateur a relâché la région 1D.
+
+        Émet rectangleGateCompleted avec y_min=y_max=0.0 (convention 1D).
+        Le workspace/engine interprète y_min==y_max==0.0 comme une gate 1D
+        et appelle create_rectangle_gate_from_bounds() avec y_min=y_max=None.
+        """
+        if self._region_1d is None:
+            return
+
+        x_min, x_max = self._region_1d.getRegion()
+        gate_name = self._region_1d_gate_name
+        x_ch = self._x_channel
+
+        _logger.info(
+            "Gate 1D émise : '%s' canal=%s [%.4f, %.4f]",
+            gate_name, x_ch, x_min, x_max,
+        )
+
+        # Convention 1D : y_channel vide, y_min=y_max=0.0
+        # Le workspace doit tester : if not y_channel → gate 1D
+        self.rectangleGateCompleted.emit(gate_name, x_ch, "", x_min, x_max, 0.0, 0.0)
+        self.disable_1d_gate_drawing()
 
     # ------------------------------------------------------------------
     # API publique — affichage gates existantes
@@ -609,6 +704,7 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             self._poly_preview = None
         self._rect_start = None
         self._cleanup_rect_preview()
+        # Ne pas nettoyer _region_1d ici : géré par disable_1d_gate_drawing()
         # Conserver les lignes quadrant (elles font partie de l'overlay final)
 
     # ------------------------------------------------------------------

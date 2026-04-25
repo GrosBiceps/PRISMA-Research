@@ -270,24 +270,60 @@ class PrismaFlowEngine:
         _logger.info("%d FCS chargés", len(ids))
         return ids
 
-    def load_wsp(self, wsp_path: Union[str, Path]) -> List[str]:
+    def load_wsp(
+        self,
+        wsp_path: Union[str, Path],
+        fcs_dir: Optional[Union[str, Path]] = None,
+    ) -> List[str]:
         """
-        Charge un workspace FlowJo (.wsp).
+        Charge un workspace FlowJo (.wsp) via fk.Workspace (API stable 1.3.0).
+
+        fk.Session.from_wsp() n'est pas documentée en mode headless et peut
+        disparaître. fk.Workspace est l'objet public stable.
+
+        Args:
+            wsp_path: Chemin du fichier .wsp.
+            fcs_dir:  Dossier racine des FCS si introuvables via les chemins WSP.
+                      Si None, FlowKit cherche dans le même dossier que le WSP.
 
         Returns:
             Liste des sample_ids chargés.
+
         Raises:
-            FileNotFoundError: si le fichier est absent.
+            FileNotFoundError: si le fichier WSP est absent.
+            PrismaEngineError: si le workspace ne contient aucun sample.
         """
         wsp_path = Path(wsp_path)
         if not wsp_path.is_file():
             raise FileNotFoundError(f"WSP introuvable : {wsp_path}")
 
-        session = fk.Session.from_wsp(str(wsp_path))
-        self._session = session
-        ids = list(session.get_sample_ids())
-        if ids:
-            self._active_sample_id = ids[0]
+        fcs_samples = None
+        if fcs_dir is not None:
+            fcs_dir = Path(fcs_dir)
+            fcs_files = sorted(fcs_dir.glob("*.fcs")) + sorted(fcs_dir.glob("*.FCS"))
+            if fcs_files:
+                fcs_samples = [fk.Sample(str(f)) for f in fcs_files]
+                _logger.debug("FCS pré-chargés pour WSP : %d fichiers", len(fcs_samples))
+
+        try:
+            workspace = fk.Workspace(
+                str(wsp_path),
+                fcs_samples=fcs_samples,
+                find_fcs_files_from_wsp=fcs_samples is None,
+            )
+        except Exception as exc:
+            raise PrismaEngineError(f"Échec ouverture WSP '{wsp_path.name}' : {exc}") from exc
+
+        ids = list(workspace.get_sample_ids())
+        if not ids:
+            raise PrismaEngineError(
+                f"Le workspace '{wsp_path.name}' ne contient aucun sample."
+            )
+
+        # Remplacer la session courante par le workspace
+        # fk.Workspace expose la même API que fk.Session pour analyze/get_gate_events/etc.
+        self._session = workspace  # type: ignore[assignment]
+        self._active_sample_id = ids[0]
         _logger.info("WSP chargé : %s → %d samples", wsp_path.name, len(ids))
         return ids
 
@@ -881,6 +917,7 @@ class PrismaFlowEngine:
                 gate_obj = self._session.get_gate(gname, gate_path=gpath)
                 gate_type = type(gate_obj).__name__.lower().replace("gate", "")
             except Exception:
+                gate_obj = None
                 gate_type = "unknown"
 
             node = GateHierarchyNode(
@@ -892,19 +929,41 @@ class PrismaFlowEngine:
             node_key = f"{gname}|{'|'.join(gpath)}"
             nodes[node_key] = node
 
+            # CORRECTIF C3 : QuadrantGate — injecter explicitement les 4 quadrants
+            # comme nœuds fils si FlowKit ne les a pas listés dans get_gate_ids().
+            # FlowKit 1.3.0 les expose déjà via get_gate_ids() mais en cas d'absence
+            # (WSP importé, version future), on les force manuellement.
+            if gate_obj is not None and isinstance(gate_obj, fk.gates.QuadrantGate):
+                child_path = gpath + (gname,)
+                existing_child_names = {n for n, p in pairs if p == child_path}
+                for quad_id, quad_obj in gate_obj.quadrants.items():
+                    if quad_id in existing_child_names:
+                        continue  # déjà présent via get_gate_ids()
+                    quad_key = f"{quad_id}|{'|'.join(child_path)}"
+                    if quad_key not in nodes:
+                        nodes[quad_key] = GateHierarchyNode(
+                            gate_name=quad_id,
+                            gate_path=child_path,
+                            gate_type="quadrant",
+                        )
+
         # Remplir counts depuis le rapport d'analyse si disponible
+        # Utilise standardize_report pour être robuste aux renommages FlowKit
         if sample_id or self._active_sample_id:
             sid = sample_id or self._active_sample_id
             try:
-                report = self.get_analysis_report()
-                if report is not None and not report.empty:
+                from src.exports.gating_exporter import GatingExporter
+                report_raw = self.get_analysis_report()
+                if report_raw is not None and not report_raw.empty:
+                    report = GatingExporter.standardize_report(report_raw)
                     for _, row in report.iterrows():
-                        if "sample_id" in report.columns and str(row["sample_id"]) != str(sid):
+                        if row.get("sample_id") is not None and str(row["sample_id"]) != str(sid):
                             continue
-                        gname_r = str(row.get("gate_name", row.get("gate_id", "")))
+                        gname_r = str(row.get("gate_name") or "")
+                        count_val = row.get("count")
                         for node in nodes.values():
                             if node.gate_name == gname_r:
-                                node.count = int(row.get("count", 0))
+                                node.count = int(count_val) if count_val is not None else 0
                                 break
             except Exception:
                 pass

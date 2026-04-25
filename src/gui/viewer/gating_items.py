@@ -13,8 +13,7 @@ Extensible vers :
 from __future__ import annotations
 
 import uuid
-from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -101,9 +100,12 @@ def _points_in_polygon(
 # Interface commune
 # ---------------------------------------------------------------------------
 
-class BaseGate(ABC):
+class BaseGate:
     """
     Interface minimale partagée par tous les types de gate.
+
+    N'hérite PAS de abc.ABC : PyQt5 (sip.wrappertype) est incompatible avec
+    ABCMeta → TypeError metaclass conflict. Duck typing via NotImplementedError.
 
     Chaque sous-classe est aussi un QGraphicsItem (héritage multiple PyQt5).
     """
@@ -112,7 +114,6 @@ class BaseGate(ABC):
         self.gate_id: str = gate_id
         self.name: str = name
 
-    @abstractmethod
     def compute_mask(
         self,
         events: pd.DataFrame,
@@ -130,11 +131,11 @@ class BaseGate(ABC):
         Returns:
             ndarray bool de longueur N_events.
         """
+        raise NotImplementedError(f"{type(self).__name__} doit implémenter compute_mask()")
 
-    @abstractmethod
     def data_vertices(
         self,
-        pixel_to_data_fn: "Callable[[float, float], Tuple[float, float]]",
+        pixel_to_data_fn: Callable[[float, float], Tuple[float, float]],
     ) -> List[Tuple[float, float]]:
         """
         Retourne les sommets de la gate en coordonnées données.
@@ -145,6 +146,16 @@ class BaseGate(ABC):
         Returns:
             Liste de tuples (xd, yd).
         """
+        raise NotImplementedError(f"{type(self).__name__} doit implémenter data_vertices()")
+
+    def get_flowkit_gate(self) -> object:
+        """
+        Retourne l'objet FlowKit Gate correspondant à cette gate visuelle.
+
+        Chaque sous-classe doit retourner un fk.gates.* valide prêt à être
+        injecté dans Session.add_gate().
+        """
+        raise NotImplementedError(f"{type(self).__name__} doit implémenter get_flowkit_gate()")
 
 
 # ---------------------------------------------------------------------------

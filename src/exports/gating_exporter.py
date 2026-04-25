@@ -40,6 +40,68 @@ class GatingExporter:
     """
 
     # ------------------------------------------------------------------
+    # CORRECTIF C4 : Normalisation robuste du rapport FlowKit
+    # ------------------------------------------------------------------
+
+    # Colonnes canoniques internes → candidats FlowKit par ordre de priorité
+    _REPORT_COL_MAP: Dict[str, List[str]] = {
+        "gate_name":       ["gate_name", "gate_id", "name"],
+        "count":           ["count", "event_count", "n_events", "events"],
+        "pct_parent":      ["relative_percent", "percent_parent", "pct_parent", "percent"],
+        "pct_total":       ["absolute_percent", "percent_total", "pct_total"],
+        "sample_id":       ["sample_id", "sample", "file"],
+        "gate_path":       ["gate_path", "path"],
+        "parent":          ["parent", "quadrant_parent", "parent_gate"],
+    }
+
+    @classmethod
+    def standardize_report(cls, report_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalise le DataFrame brut de FlowKit vers des colonnes canoniques.
+
+        Robuste aux renommages de colonnes entre versions de FlowKit :
+          count / event_count / n_events
+          relative_percent / percent / pct_parent
+          gate_name / gate_id / name
+          etc.
+
+        Args:
+            report_df: DataFrame brut de Session.get_analysis_report().
+
+        Returns:
+            DataFrame avec colonnes canoniques garanties. Les colonnes non
+            trouvées sont ajoutées avec des valeurs None.
+        """
+        if report_df is None or report_df.empty:
+            return pd.DataFrame(columns=list(cls._REPORT_COL_MAP.keys()))
+
+        existing = set(report_df.columns)
+        mapping: Dict[str, str] = {}  # canonical → actual column name
+
+        for canonical, candidates in cls._REPORT_COL_MAP.items():
+            for candidate in candidates:
+                if candidate in existing:
+                    mapping[canonical] = candidate
+                    break
+
+        result = report_df.copy()
+
+        # Renommer les colonnes trouvées vers leurs noms canoniques
+        rename_map = {v: k for k, v in mapping.items() if v != k}
+        if rename_map:
+            result = result.rename(columns=rename_map)
+
+        # Ajouter les colonnes canoniques manquantes avec None
+        for canonical in cls._REPORT_COL_MAP:
+            if canonical not in result.columns:
+                result[canonical] = None
+                _logger.debug(
+                    "Colonne rapport '%s' absente dans FlowKit — remplie avec None", canonical
+                )
+
+        return result
+
+    # ------------------------------------------------------------------
     # Export statistiques
     # ------------------------------------------------------------------
 
