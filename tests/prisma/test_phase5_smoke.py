@@ -174,6 +174,7 @@ class TestStatisticsController:
     def test_refresh_with_sample(self, qapp):
         from src.gui.viewer.statistics_controller import StatisticsController
         from src.gui.viewer.statistics_dock import StatisticsDock
+        from PyQt5.QtTest import QTest
 
         engine = _make_mock_engine()
         dock = StatisticsDock()
@@ -181,7 +182,13 @@ class TestStatisticsController:
         ctrl.set_current_sample("sample_001")
         ctrl.set_axis_channels("FSC-A", "SSC-A")
         ctrl.refresh_statistics()
-        # Le dock doit passer en LOADING puis READY (async — on attend juste que ça ne crash pas)
+        # Attendre que le worker QThreadPool complète (max 2 s)
+        for _ in range(20):
+            QTest.qWait(100)
+            if not ctrl._refresh_pending:
+                break
+        # Le dock doit être en état READY ou ERROR, pas LOADING
+        assert not ctrl._refresh_pending
 
     def test_on_engine_analysis_completed(self, qapp):
         from src.gui.viewer.statistics_controller import StatisticsController

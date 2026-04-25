@@ -215,6 +215,9 @@ class StatisticsController(QObject):
         self._transform_id: Optional[str] = None
         self._last_df: Optional[pd.DataFrame] = None
         self._refresh_pending: bool = False
+        self._destroyed: bool = False
+        # Marquer comme détruit à la destruction Qt pour éviter les workers orphelins
+        self.destroyed.connect(self._on_self_destroyed)
 
     # ------------------------------------------------------------------
     # API publique
@@ -300,14 +303,29 @@ class StatisticsController(QObject):
     # Slots worker internes
     # ------------------------------------------------------------------
 
+    def _on_self_destroyed(self) -> None:
+        """Slot Qt destroyed — toute livraison de worker sera ignorée."""
+        self._destroyed = True
+
     @pyqtSlot(pd.DataFrame)
     def _on_worker_finished(self, df: pd.DataFrame) -> None:
         self._refresh_pending = False
+        if self._destroyed:
+            return
         self._last_df = df
-        self._dock.set_dataframe(df)
+        try:
+            self._dock.set_dataframe(df)
+        except RuntimeError:
+            # dock déjà détruit (C++ object deleted)
+            pass
 
     @pyqtSlot(str)
     def _on_worker_error(self, message: str) -> None:
         self._refresh_pending = False
+        if self._destroyed:
+            return
         _logger.warning("StatisticsController worker error: %s", message)
-        self._dock.set_error(message)
+        try:
+            self._dock.set_error(message)
+        except RuntimeError:
+            pass

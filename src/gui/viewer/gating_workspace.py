@@ -52,7 +52,6 @@ from src.utils.logger import get_logger
 from .gating_engine import (
     PrismaFlowEngine,
     PrismaEngineError,
-    GateHierarchyNode,
 )
 from .gating_tree_model import GatingTreeModel, GateNode
 from .plot_panel_model import PlotPanelModel, RenderMode, DensityCache
@@ -789,6 +788,8 @@ class PrismaGatingWorkspace(QWidget):
         self._last_canvas_axes: Optional[Tuple[str, str]] = None
         self._loaded_fcs_paths: List[str] = []
         self._last_saved_workspace_path: Optional[str] = None
+        # Alias QTreeView — défini dans _connect_signals après build_panel_widget()
+        self._tree_view: Optional[QTreeView] = None
 
         # Phase 5 — contrôleurs et dock
         self._tree_ctrl = PopulationTreeController(engine=self._engine, parent=self)
@@ -850,8 +851,10 @@ class PrismaGatingWorkspace(QWidget):
     def _update_statistics(self) -> None:
         """
         Wrapper de compatibilité — délègue au StatisticsController.
-        Appelé depuis _refresh_canvas() et _on_engine_analysis_completed().
+        Guard sur _has_active_panel pour éviter les workers orphelins au démarrage.
         """
+        if not self._has_active_panel():
+            return
         try:
             x_ch = self._selected_axis_channel(self._combo_x)
             y_ch = self._selected_axis_channel(self._combo_y)
@@ -1057,12 +1060,12 @@ class PrismaGatingWorkspace(QWidget):
             pass  # Engine non QObject en mode dégradé
 
         # Arbre (Phase 5) → workspace via populationSelected
+        # populationSelected couvre déjà les clics de l'arbre — pas de double connect.
         self._tree_ctrl.populationSelected.connect(self._on_population_selected_from_ctrl)
 
-        # Compat rétrograde : _tree_view pointe sur le QTreeView du contrôleur
+        # Alias rétrograde : _tree_view pointe sur le QTreeView du contrôleur.
+        # Ne pas connecter clicked directement — évite le double-déclenchement.
         self._tree_view = self._tree_ctrl.tree_view
-        if self._tree_view is not None:
-            self._tree_view.clicked.connect(self._on_tree_node_clicked)
 
         # Contrôles → affichage
         self._combo_group.currentTextChanged.connect(self._on_group_changed)
@@ -1112,10 +1115,10 @@ class PrismaGatingWorkspace(QWidget):
 
     def _on_engine_analysis_completed(self, sample_id: str) -> None:
         """
-        Après analyze async : stats via StatisticsController (connecté séparément).
-        L'arbre est rafraîchi par PopulationTreeController.
+        Après analyze async.
+        StatisticsController et PopulationTreeController sont connectés directement
+        à analysisCompleted — pas de double appel ici.
         """
-        self._update_statistics()
 
     def _on_engine_analysis_error(self, sample_id: str, error_msg: str) -> None:
         _logger.warning("Analyse async échouée (sample=%s): %s", sample_id, error_msg)
@@ -1183,16 +1186,25 @@ class PrismaGatingWorkspace(QWidget):
         self._worksheet.set_panel_columns(count)
 
     def _on_population_selected_from_ctrl(self, gate_path: Tuple[str, ...]) -> None:
-        """Slot : PopulationTreeController a émis populationSelected."""
+        """
+        Slot : PopulationTreeController a émis populationSelected.
+        Remplace _on_tree_node_clicked pour les sélections d'arbre Phase 5.
+        """
         if not gate_path:
             return
         self._active_gate_name = gate_path[0]
         self._current_gate_node = gate_path
+
+        # Synchroniser le combo population sans ré-émettre currentIndexChanged
         idx = self._combo_population.findText(gate_path[0])
         if idx >= 0:
             self._combo_population.blockSignals(True)
             self._combo_population.setCurrentIndex(idx)
             self._combo_population.blockSignals(False)
+
+        # Guard identique à _refresh_canvas
+        if not self._has_active_panel():
+            return
         self._refresh_canvas()
         self._ensure_population_panel(gate_path)
 
@@ -1211,9 +1223,13 @@ class PrismaGatingWorkspace(QWidget):
         if not files:
             raise FileNotFoundError(f"Aucun fichier FCS trouvé dans: {folder}")
 
-        self._engine = PrismaFlowEngine()
+        new_engine = PrismaFlowEngine()
         self._loaded_fcs_paths = []
         self._last_saved_workspace_path = None
+        # Remplacer le moteur via set_engine pour reconnecter contrôleurs + signaux
+        self._engine = new_engine
+        self._tree_ctrl.set_engine(new_engine)
+        self._stats_ctrl.set_engine(new_engine)
 
         for fpath in files:
             self.load_sample(str(fpath.resolve()))
@@ -1336,6 +1352,8 @@ class PrismaGatingWorkspace(QWidget):
             engine = PrismaFlowEngine()
             engine.load_wsp(path, fcs_dir=fallback_fcs_folder)
             self._engine = engine
+            self._tree_ctrl.set_engine(engine)
+            self._stats_ctrl.set_engine(engine)
             if fallback_fcs_folder:
                 folder = Path(fallback_fcs_folder)
                 files = sorted(folder.glob("*.fcs")) + sorted(folder.glob("*.FCS"))
@@ -1347,7 +1365,7 @@ class PrismaGatingWorkspace(QWidget):
         if suffix in {".gml", ".xml"}:
             if not fallback_fcs_folder:
                 raise PrismaEngineError("Un dossier FCS actif est requis pour charger un GatingML.")
-            self.set_input_source_fcs(fallback_fcs_folder)
+            self.set_input_source_fcs(fallback_fcs_folder)  # appelle déjà set_engine sur contrôleurs
             self._engine.load_gml(path)
             self._last_saved_workspace_path = str(path.resolve())
             self.reload_from_engine()
@@ -1497,6 +1515,12 @@ class PrismaGatingWorkspace(QWidget):
                     active_panel_id = panel_state.panel_id
                     self._worksheet.set_active_panel(panel)
 
+                # Forcer l'affichage initial — sans _refresh() le panel serait vide
+                try:
+                    panel._refresh()
+                except Exception as exc_r:
+                    _logger.debug("panel._refresh() à la restauration: %s", exc_r)
+
             except Exception as exc:
                 _logger.warning("Restauration panel '%s' échouée: %s", panel_state.panel_id, exc)
 
@@ -1596,45 +1620,6 @@ class PrismaGatingWorkspace(QWidget):
             self._reload_population_combo(self._engine.get_gate_ids())
         except Exception as exc:
             _logger.debug("_reload_population_combo: %s", exc)
-
-    def _populate_tree(
-        self,
-        nodes: List[GateHierarchyNode],
-        parent_id: Optional[str],
-    ) -> None:
-        for node in nodes:
-            gate_node = GateNode(
-                gate_id=node.gate_name,
-                name=node.gate_name,
-                parent_id=parent_id,
-                gate_type=node.gate_type,
-                flow_count=int(node.count),
-                flow_percent=float(node.pct_parent),
-            )
-            gate_node.mask = None  # comptes déjà dans node.count
-            self._gate_tree_model.add_gate(gate_node)
-            if node.children:
-                self._populate_tree(node.children, parent_id=node.gate_name)
-
-    def _dedupe_hierarchy_nodes(
-        self,
-        nodes: List[GateHierarchyNode],
-    ) -> List[GateHierarchyNode]:
-        """Supprime les doublons de hiérarchie par clé (gate_name, gate_path)."""
-        seen: set[Tuple[str, Tuple[str, ...]]] = set()
-
-        def _walk(items: List[GateHierarchyNode]) -> List[GateHierarchyNode]:
-            result: List[GateHierarchyNode] = []
-            for item in items:
-                key = (str(item.gate_name), tuple(item.gate_path))
-                if key in seen:
-                    continue
-                seen.add(key)
-                item.children = _walk(item.children)
-                result.append(item)
-            return result
-
-        return _walk(nodes)
 
     # ------------------------------------------------------------------
     # Slots contrôles
@@ -1852,6 +1837,10 @@ class PrismaGatingWorkspace(QWidget):
     # ------------------------------------------------------------------
 
     def _on_tree_node_clicked(self, index: QModelIndex) -> None:
+        """
+        Compat rétrograde — non connecté en Phase 5 (remplacé par populationSelected).
+        Conservé pour sous-classes éventuelles.
+        """
         node: Optional[GateNode] = index.data(Qt.UserRole)
         if node is None:
             return
@@ -1861,11 +1850,11 @@ class PrismaGatingWorkspace(QWidget):
             self._current_gate_node = (node.gate_id, *paths[0])
         else:
             self._current_gate_node = (node.gate_id,)
-        # Mettre à jour le combo population
         idx = self._combo_population.findText(node.gate_id)
         if idx >= 0:
             self._combo_population.setCurrentIndex(idx)
-        self._refresh_canvas()
+        if self._has_active_panel():
+            self._refresh_canvas()
         self._ensure_population_panel(self._current_gate_node)
 
     def _on_population_index_changed(self, _index: int) -> None:
@@ -2214,13 +2203,14 @@ class PrismaGatingWorkspace(QWidget):
                 self._combo_population.blockSignals(False)
 
             # Sélection visuelle dans l'arbre
-            model = self._gate_tree_model
-            for row in range(model.rowCount()):
-                idx_tree = model.index(row, 0)
-                node = idx_tree.data(Qt.UserRole)
-                if node and getattr(node, "gate_id", None) == new_gate_name:
-                    self._tree_view.setCurrentIndex(idx_tree)
-                    break
+            if self._tree_view is not None:
+                model = self._gate_tree_model
+                for row in range(model.rowCount()):
+                    idx_tree = model.index(row, 0)
+                    node = idx_tree.data(Qt.UserRole)
+                    if node and getattr(node, "gate_id", None) == new_gate_name:
+                        self._tree_view.setCurrentIndex(idx_tree)
+                        break
 
             self._ensure_population_panel(self._current_gate_node)
 
@@ -2234,6 +2224,9 @@ class PrismaGatingWorkspace(QWidget):
     # ------------------------------------------------------------------
 
     def _on_delete_gate(self) -> None:
+        if self._tree_view is None:
+            self._show_error("Arbre de gating non initialisé.")
+            return
         index = self._tree_view.currentIndex()
         node: Optional[GateNode] = index.data(Qt.UserRole)
         if node is None:
@@ -2285,6 +2278,9 @@ class PrismaGatingWorkspace(QWidget):
     def _on_export_fcs(self) -> None:
         from PyQt5.QtWidgets import QFileDialog
 
+        if self._tree_view is None:
+            self._show_error("Arbre de gating non initialisé.")
+            return
         index = self._tree_view.currentIndex()
         node: Optional[GateNode] = index.data(Qt.UserRole)
         if node is None:
@@ -2495,6 +2491,8 @@ class PrismaGatingWorkspace(QWidget):
                 parent_path = tuple(panel_gate_node[1:])
                 return parent_path + (parent_name,)
 
+        if self._tree_view is None:
+            return ("root",)
         index = self._tree_view.currentIndex()
         node: Optional[GateNode] = index.data(Qt.UserRole)
         if node is None:
@@ -2502,7 +2500,6 @@ class PrismaGatingWorkspace(QWidget):
         paths = self._engine.find_gate_paths(node.gate_id)
         if not paths:
             return ("root",)
-        # Le chemin parent = path du nœud sélectionné + son propre nom
         return paths[0] + (node.gate_id,)
 
     def _show_error(self, message: str) -> None:
