@@ -199,6 +199,11 @@ class PrismaGatingWorkspace(QWidget):
         grp_sel = QGroupBox("Sélection")
         vsel = QVBoxLayout(grp_sel)
 
+        vsel.addWidget(QLabel("Groupe (WSP FlowJo)"))
+        self._combo_group = QComboBox()
+        self._combo_group.addItem("— Tous —")
+        vsel.addWidget(self._combo_group)
+
         vsel.addWidget(QLabel("Sample"))
         self._combo_sample = QComboBox()
         vsel.addWidget(self._combo_sample)
@@ -307,6 +312,7 @@ class PrismaGatingWorkspace(QWidget):
         self._tree_view.clicked.connect(self._on_tree_node_clicked)
 
         # Contrôles → affichage
+        self._combo_group.currentTextChanged.connect(self._on_group_changed)
         self._combo_sample.currentTextChanged.connect(self._on_sample_changed)
         self._btn_apply.clicked.connect(self._refresh_canvas)
 
@@ -329,6 +335,7 @@ class PrismaGatingWorkspace(QWidget):
 
     def reload_from_engine(self) -> None:
         """Recharge l'UI complète depuis l'état courant du moteur."""
+        self._reload_group_combo()
         self._reload_sample_combo()
         self._reload_channel_combos()
         self._reload_transform_combo()
@@ -344,10 +351,24 @@ class PrismaGatingWorkspace(QWidget):
     # Rechargements internes
     # ------------------------------------------------------------------
 
-    def _reload_sample_combo(self) -> None:
+    def _reload_group_combo(self) -> None:
+        """Recharge le sélecteur de groupes (visible uniquement sur Workspace)."""
+        self._combo_group.blockSignals(True)
+        self._combo_group.clear()
+        self._combo_group.addItem("— Tous —")
+        groups = self._engine.get_sample_groups()
+        for g in groups:
+            if g != "All Samples":
+                self._combo_group.addItem(g)
+        # Afficher le combo uniquement si des groupes existent
+        has_groups = len(groups) > 1 or (len(groups) == 1 and groups[0] != "All Samples")
+        self._combo_group.setVisible(has_groups)
+        self._combo_group.blockSignals(False)
+
+    def _reload_sample_combo(self, group_name: Optional[str] = None) -> None:
         self._combo_sample.blockSignals(True)
         self._combo_sample.clear()
-        for sid in self._engine.get_sample_ids():
+        for sid in self._engine.get_sample_ids(group_name=group_name):
             self._combo_sample.addItem(sid)
         if self._engine.active_sample_id:
             idx = self._combo_sample.findText(self._engine.active_sample_id)
@@ -432,6 +453,17 @@ class PrismaGatingWorkspace(QWidget):
     # ------------------------------------------------------------------
     # Slots contrôles
     # ------------------------------------------------------------------
+
+    def _on_group_changed(self, group_name: str) -> None:
+        """Filtre les samples par groupe FlowJo."""
+        if not group_name or group_name == "— Tous —":
+            self._reload_sample_combo(group_name=None)
+        else:
+            try:
+                self._engine.set_active_group(group_name)
+                self._reload_sample_combo(group_name=group_name)
+            except Exception as exc:
+                self._show_error(f"Changement de groupe : {exc}")
 
     def _on_sample_changed(self, sample_id: str) -> None:
         if not sample_id:
@@ -668,8 +700,13 @@ class PrismaGatingWorkspace(QWidget):
             self._show_error(str(exc))
 
     def _on_analyze(self) -> None:
+        """Analyse le sample actif, ou tout le groupe actif si Workspace."""
         try:
-            self._engine.analyze()
+            group = self._engine.active_group
+            if group:
+                self._engine.analyze_group(group, use_mp=False)
+            else:
+                self._engine.analyze(use_mp=False)
             self._refresh_tree()
             self._refresh_canvas()
         except Exception as exc:
