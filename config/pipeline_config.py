@@ -312,10 +312,10 @@ class CitrusConfig:
     """Configuration de l'analyse Citrus (identification clusters stratifiants)."""
 
     enabled: bool = False
-    endpoint_column: str = "group"        # Colonne de cohort_metadata portant l'endpoint
-    endpoint_type: str = "classification" # "classification" | "continuous"
-    feature_type: str = "abundances"      # "abundances" | "medians" | "both"
-    model_type: str = "glmnet"            # "glmnet" | "sam"
+    endpoint_column: str = "group"  # Colonne de cohort_metadata portant l'endpoint
+    endpoint_type: str = "classification"  # "classification" | "continuous"
+    feature_type: str = "abundances"  # "abundances" | "medians" | "both"
+    model_type: str = "glmnet"  # "glmnet" | "sam"
     n_cells_per_sample: int = 1000
     min_cluster_size_percent: float = 0.05
     n_cv_folds: int = 5
@@ -384,6 +384,9 @@ class PipelineConfig:
     qc_methods_enabled: List[str] = field(default_factory=lambda: ["peacoqc"])
     dimred_methods_enabled: List[str] = field(default_factory=lambda: ["umap"])
     clustering_methods_enabled: List[str] = field(default_factory=lambda: ["flowsom"])
+    # Contexte de données RUO (optionnel): workspace de gating + population cible.
+    gating_workspace_path: str | None = None
+    target_population: str = "Root"
 
     # ------------------------------------------------------------------
     # Constructeurs alternatifs
@@ -452,6 +455,8 @@ class PipelineConfig:
             "qc_methods_enabled",
             "dimred_methods_enabled",
             "clustering_methods_enabled",
+            "gating_workspace_path",
+            "target_population",
             "pipeline_version",
         }
         cfg._extra = {k: v for k, v in raw.items() if k not in _structured_keys}
@@ -689,6 +694,13 @@ class PipelineConfig:
                 str(v).lower() for v in (raw["clustering_methods_enabled"] or [])
             ]
 
+        if "gating_workspace_path" in raw:
+            raw_path = raw.get("gating_workspace_path")
+            cfg.gating_workspace_path = None if raw_path in (None, "") else str(raw_path)
+
+        if "target_population" in raw:
+            cfg.target_population = str(raw.get("target_population") or "Root")
+
         # Validation
         cfg._validate()
         return cfg
@@ -878,6 +890,20 @@ class PipelineConfig:
         if self.clustering_method not in self.clustering_methods_enabled:
             self.clustering_methods_enabled.insert(0, self.clustering_method)
 
+        if self.gating_workspace_path is not None and not isinstance(
+            self.gating_workspace_path, str
+        ):
+            raise TypeError("Configuration: gating_workspace_path doit être une chaîne ou null.")
+
+        if isinstance(self.gating_workspace_path, str):
+            normalized_path = self.gating_workspace_path.strip()
+            self.gating_workspace_path = normalized_path or None
+
+        self.target_population = str(self.target_population or "").strip()
+        if not self.target_population:
+            warnings.warn("target_population vide détecté. Basculement sur 'Root'.")
+            self.target_population = "Root"
+
     # ------------------------------------------------------------------
     # Utilitaires
     # ------------------------------------------------------------------
@@ -887,6 +913,14 @@ class PipelineConfig:
         from dataclasses import asdict
 
         return asdict(self)
+
+    def has_gating_context(self) -> bool:
+        """True si un workspace de gating est configuré."""
+        return bool(self.gating_workspace_path)
+
+    def uses_root_population(self) -> bool:
+        """True si l'analyse cible la population racine (fichier complet)."""
+        return self.target_population.strip().lower() == "root"
 
     def __repr__(self) -> str:
         return (

@@ -14,13 +14,17 @@ Responsabilités :
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import List, Optional, Tuple
+from pathlib import Path
+from enum import Enum, auto
+from typing import Any, List, Optional, Tuple
 
 import pandas as pd
-from PyQt5.QtCore import Qt, QModelIndex
+from PyQt5.QtCore import Qt, QModelIndex, pyqtSignal
 from PyQt5.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -42,8 +46,75 @@ from .gating_engine import (
     PrismaEngineError,
     GateHierarchyNode,
 )
-from .interactive_canvas import InteractiveGatingCanvas, DrawMode
 from .gating_tree_model import GatingTreeModel, GateNode
+
+try:
+    from .interactive_canvas import InteractiveGatingCanvas, DrawMode
+
+    _INTERACTIVE_CANVAS_AVAILABLE = True
+except Exception as exc:  # pragma: no cover - dépendance optionnelle
+    _INTERACTIVE_CANVAS_AVAILABLE = False
+    _INTERACTIVE_CANVAS_IMPORT_ERROR = exc
+
+    class DrawMode(Enum):
+        NAVIGATE = auto()
+        POLYGON = auto()
+        RECTANGLE = auto()
+        QUADRANT = auto()
+
+    class InteractiveGatingCanvas(QFrame):
+        polygonGateCompleted = pyqtSignal(str, str, str, list)
+        rectangleGateCompleted = pyqtSignal(str, str, str, float, float, float, float)
+        quadrantGateCompleted = pyqtSignal(str, str, str, float, float)
+
+        def __init__(self, parent: Optional[QWidget] = None) -> None:
+            super().__init__(parent)
+            self.setObjectName("interactiveCanvasFallback")
+            self.setMinimumWidth(320)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(16, 16, 16, 16)
+            layout.setSpacing(8)
+            label = QLabel(
+                "PyQtGraph indisponible\n"
+                "Le workspace peut s'ouvrir en mode dégradé, mais le dessin interactif\n"
+                "des gates est désactivé tant que la dépendance n'est pas installée."
+            )
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(label)
+
+        def set_draw_mode(self, mode: DrawMode, gate_name: str = "Gate") -> None:
+            return None
+
+        def cancel_drawing(self) -> None:
+            return None
+
+        def set_data_2d(
+            self,
+            df: pd.DataFrame,
+            x_ch: str,
+            y_ch: str,
+            density_coloring: bool = False,
+        ) -> None:
+            return None
+
+        def set_data_1d(self, df: pd.DataFrame, x_ch: str) -> None:
+            return None
+
+        def set_data_overlay(
+            self,
+            datasets: List[Any],
+            x_ch: str,
+            y_ch: str,
+        ) -> None:
+            return None
+
+        def reload_gate_overlays_from_engine(self, engine: PrismaFlowEngine) -> None:
+            return None
+
+        def remove_gate_overlay(self, gate_id: str) -> None:
+            return None
+
 
 _logger = get_logger("viewer.gating_workspace")
 
@@ -77,6 +148,8 @@ class PrismaGatingWorkspace(QWidget):
             Si None, un engine vide est créé (utile en dev).
     """
 
+    gatingContextSaved = pyqtSignal(str, list)
+
     def __init__(
         self,
         engine: Optional[PrismaFlowEngine] = None,
@@ -89,6 +162,8 @@ class PrismaGatingWorkspace(QWidget):
         self._active_gate_name: Optional[str] = None
         self._active_transform_id: Optional[str] = None
         self._active_comp_id: Optional[str] = None
+        self._loaded_fcs_paths: List[str] = []
+        self._last_saved_workspace_path: Optional[str] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -283,6 +358,8 @@ class PrismaGatingWorkspace(QWidget):
         self._btn_analyze = QPushButton("⚡  Analyser tous les samples")
         self._btn_export_stats = QPushButton("📊  Exporter statistiques CSV")
         self._btn_export_fcs = QPushButton("💾  Exporter gate → FCS")
+        self._btn_save_workspace = QPushButton("💾  Sauvegarder contexte gating")
+        self._btn_load_workspace = QPushButton("📂  Charger contexte gating")
 
         for btn in [
             self._btn_apply,
@@ -290,6 +367,8 @@ class PrismaGatingWorkspace(QWidget):
             self._btn_analyze,
             self._btn_export_stats,
             self._btn_export_fcs,
+            self._btn_save_workspace,
+            self._btn_load_workspace,
         ]:
             vact.addWidget(btn)
 
@@ -328,6 +407,8 @@ class PrismaGatingWorkspace(QWidget):
         self._btn_analyze.clicked.connect(self._on_analyze)
         self._btn_export_stats.clicked.connect(self._on_export_stats)
         self._btn_export_fcs.clicked.connect(self._on_export_fcs)
+        self._btn_save_workspace.clicked.connect(self._on_save_workspace)
+        self._btn_load_workspace.clicked.connect(self._on_load_workspace)
 
     # ------------------------------------------------------------------
     # API publique — rechargement depuis engine
@@ -346,6 +427,130 @@ class PrismaGatingWorkspace(QWidget):
         """Remplace le moteur et recharge l'UI."""
         self._engine = engine
         self.reload_from_engine()
+
+    def set_input_source_fcs(self, fcs_folder: str) -> None:
+        """Charge les FCS d'un dossier en backend Session pour le workspace interactif."""
+        folder = Path(fcs_folder)
+        if not folder.exists() or not folder.is_dir():
+            raise FileNotFoundError(f"Dossier FCS introuvable: {folder}")
+
+        files = sorted(folder.glob("*.fcs")) + sorted(folder.glob("*.FCS"))
+        if not files:
+            raise FileNotFoundError(f"Aucun fichier FCS trouvé dans: {folder}")
+
+        engine = PrismaFlowEngine()
+        engine.load_fcs_batch(files, make_first_active=True)
+        self._engine = engine
+        self._loaded_fcs_paths = [str(p.resolve()) for p in files]
+        self._last_saved_workspace_path = None
+        self.reload_from_engine()
+
+    def get_available_populations(self) -> List[str]:
+        """Retourne la liste des populations disponibles pour l'orchestrateur Wizard."""
+        gate_ids = sorted({str(g) for g in self._engine.get_gate_ids()}, key=str.lower)
+        populations = ["Root"]
+        populations.extend([g for g in gate_ids if g and g.lower() != "root"])
+        return populations
+
+    def save_workspace_state(self, output_path: str) -> str:
+        """
+        Sauvegarde un contexte de gating PRISMA réutilisable par le Wizard/Executor.
+
+        Le fichier JSON référence un GatingML sidecar exporté depuis la Session.
+        """
+        path = Path(output_path)
+        if path.suffix.lower() != ".json":
+            path = path.with_suffix(".json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        gml_path = path.with_suffix(".gatingml.xml")
+        self._engine.export_gml(gml_path)
+
+        payload = {
+            "format": "prisma_gating_context_v1",
+            "workspace_path": str(path.resolve()),
+            "gatingml_path": str(gml_path.resolve()),
+            "active_sample_id": self._engine.active_sample_id,
+            "fcs_files": list(self._loaded_fcs_paths),
+            "populations": self.get_available_populations(),
+        }
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        self._last_saved_workspace_path = str(path.resolve())
+        return self._last_saved_workspace_path
+
+    def load_workspace_state(
+        self,
+        workspace_path: str,
+        fallback_fcs_folder: Optional[str] = None,
+    ) -> List[str]:
+        """Recharge un contexte de gating (JSON PRISMA, GatingML ou WSP)."""
+        path = Path(workspace_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Workspace de gating introuvable: {path}")
+
+        suffix = path.suffix.lower()
+        if suffix == ".wsp":
+            engine = PrismaFlowEngine()
+            engine.load_wsp(path, fcs_dir=fallback_fcs_folder)
+            self._engine = engine
+            if fallback_fcs_folder:
+                folder = Path(fallback_fcs_folder)
+                files = sorted(folder.glob("*.fcs")) + sorted(folder.glob("*.FCS"))
+                self._loaded_fcs_paths = [str(p.resolve()) for p in files]
+            self._last_saved_workspace_path = str(path.resolve())
+            self.reload_from_engine()
+            return self.get_available_populations()
+
+        if suffix in {".gml", ".xml"}:
+            if not fallback_fcs_folder:
+                raise PrismaEngineError("Un dossier FCS actif est requis pour charger un GatingML.")
+            self.set_input_source_fcs(fallback_fcs_folder)
+            self._engine.load_gml(path)
+            self._last_saved_workspace_path = str(path.resolve())
+            self.reload_from_engine()
+            return self.get_available_populations()
+
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if str(payload.get("format", "")).strip() != "prisma_gating_context_v1":
+            raise PrismaEngineError(
+                "Format de contexte de gating non supporté (attendu prisma_gating_context_v1)."
+            )
+
+        fcs_files = [str(p) for p in (payload.get("fcs_files") or []) if str(p).strip()]
+        if not fcs_files and fallback_fcs_folder:
+            folder = Path(fallback_fcs_folder)
+            files = sorted(folder.glob("*.fcs")) + sorted(folder.glob("*.FCS"))
+            fcs_files = [str(p.resolve()) for p in files]
+        if not fcs_files:
+            raise PrismaEngineError(
+                "Contexte de gating invalide: aucun FCS associé et aucun fallback fourni."
+            )
+
+        gml_path = payload.get("gatingml_path")
+        if not gml_path:
+            gml_path = str(path.with_suffix(".gatingml.xml"))
+        gml_file = Path(str(gml_path))
+        if not gml_file.is_absolute():
+            gml_file = (path.parent / gml_file).resolve()
+        if not gml_file.exists():
+            raise FileNotFoundError(f"GatingML associé introuvable: {gml_file}")
+
+        engine = PrismaFlowEngine()
+        engine.load_fcs_batch([Path(p) for p in fcs_files], make_first_active=True)
+        engine.load_gml(gml_file)
+
+        active_sample_id = payload.get("active_sample_id")
+        if active_sample_id:
+            try:
+                engine.set_active_sample(str(active_sample_id))
+            except Exception:
+                _logger.warning("Sample actif sauvegardé introuvable: %s", active_sample_id)
+
+        self._engine = engine
+        self._loaded_fcs_paths = list(fcs_files)
+        self._last_saved_workspace_path = str(path.resolve())
+        self.reload_from_engine()
+        return self.get_available_populations()
 
     # ------------------------------------------------------------------
     # Rechargements internes
@@ -626,7 +831,10 @@ class PrismaGatingWorkspace(QWidget):
                 gate_path,
                 x_channel,
                 y_channel,
-                x_min, x_max, y_min, y_max,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
                 transform_ref=self._selected_transform(),
             )
             self._post_gate_created()
@@ -715,13 +923,12 @@ class PrismaGatingWorkspace(QWidget):
     def _on_export_stats(self) -> None:
         from PyQt5.QtWidgets import QFileDialog
 
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter statistiques", "", "CSV (*.csv)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "Exporter statistiques", "", "CSV (*.csv)")
         if not path:
             return
         try:
             from src.exports.gating_exporter import GatingExporter
+
             GatingExporter.export_statistics(self._engine, path)
             QMessageBox.information(self, "Export", f"Statistiques exportées :\n{path}")
         except Exception as exc:
@@ -746,6 +953,7 @@ class PrismaGatingWorkspace(QWidget):
             paths = self._engine.find_gate_paths(node.gate_id)
             gate_path = paths[0] if paths else None
             from src.exports.gating_exporter import GatingExporter
+
             GatingExporter.export_gated_fcs(
                 self._engine,
                 sample_id=self._current_sample_id(),
@@ -756,6 +964,48 @@ class PrismaGatingWorkspace(QWidget):
             QMessageBox.information(self, "Export", f"FCS exporté :\n{path}")
         except Exception as exc:
             self._show_error(f"Export FCS : {exc}")
+
+    def _on_save_workspace(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Sauvegarder le contexte de gating",
+            "gating_context.prisma.json",
+            "PRISMA Gating Context (*.json)",
+        )
+        if not path:
+            return
+        try:
+            saved_path = self.save_workspace_state(path)
+            populations = self.get_available_populations()
+            self.gatingContextSaved.emit(saved_path, populations)
+            QMessageBox.information(
+                self,
+                "Contexte sauvegardé",
+                f"Contexte de gating sauvegardé:\n{saved_path}",
+            )
+        except Exception as exc:
+            self._show_error(f"Sauvegarde contexte de gating: {exc}")
+
+    def _on_load_workspace(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Charger un contexte de gating",
+            "",
+            "Contextes PRISMA / FlowKit (*.json *.gml *.xml *.wsp)",
+        )
+        if not path:
+            return
+        try:
+            populations = self.load_workspace_state(path)
+            saved_path = self._last_saved_workspace_path or str(Path(path).resolve())
+            self.gatingContextSaved.emit(saved_path, populations)
+            QMessageBox.information(
+                self,
+                "Contexte chargé",
+                f"Contexte de gating chargé:\n{saved_path}",
+            )
+        except Exception as exc:
+            self._show_error(f"Chargement contexte de gating: {exc}")
 
     # ------------------------------------------------------------------
     # Gestion mode dessin
@@ -826,3 +1076,15 @@ class PrismaGatingWorkspace(QWidget):
     def _show_error(self, message: str) -> None:
         _logger.error("UI Error : %s", message)
         QMessageBox.critical(self, "Erreur PRISMA Gating", message)
+
+    def closeEvent(self, event: object) -> None:
+        """Émet le dernier contexte sauvegardé à la fermeture validée du workspace."""
+        if self._last_saved_workspace_path:
+            try:
+                self.gatingContextSaved.emit(
+                    self._last_saved_workspace_path,
+                    self.get_available_populations(),
+                )
+            except Exception as exc:
+                _logger.warning("Emission gatingContextSaved à la fermeture échouée: %s", exc)
+        super().closeEvent(event)  # type: ignore[arg-type]

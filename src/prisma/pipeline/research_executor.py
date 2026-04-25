@@ -59,6 +59,20 @@ class ResearchPipelineResult:
     final_output: np.ndarray | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedInputData:
+    """Contexte de données effectif résolu avant exécution des stratégies."""
+
+    dataframe: pd.DataFrame
+    marker_columns: List[str]
+    data_context_mode: Literal["full_file", "gated_population"]
+    input_events: int
+    selected_events: int
+    input_fcs_files: List[str]
+    gating_workspace_path: Optional[str]
+    target_population: str
+
+
 class ResearchPipelineExecutor:
     """Exécute une séquence de stratégies enregistrées dans StrategyRegistry."""
 
@@ -130,18 +144,17 @@ class ResearchPipelineExecutor:
         wizard_cfg = dict(getattr(cfg, "_extra", {}).get("wizard", {}) or {})
 
         files = self._resolve_input_files(cfg)
-        if not files:
-            raise ValueError("Aucun fichier FCS trouvé dans le dossier d'entrée.")
 
         _progress(ResearchRunStep.LOADING)
-        adatas = load_fcs_files(files, condition="RUO")
-        if not adatas:
-            raise ValueError("Chargement FCS vide: aucun fichier exploitable.")
-
-        data_df = self._stack_adatas(adatas)
-        marker_columns = [c for c in data_df.columns if c != "__sample__"]
+        resolved_input = self._load_analysis_dataframe(cfg, files)
+        data_df = resolved_input.dataframe
+        marker_columns = resolved_input.marker_columns
         log.info(
-            "[RUO] Chargement OK: %d cellules, %d marqueurs", len(data_df), len(marker_columns)
+            "[RUO] Chargement OK: mode=%s | avant=%d | après=%d | marqueurs=%d",
+            resolved_input.data_context_mode,
+            resolved_input.input_events,
+            resolved_input.selected_events,
+            len(marker_columns),
         )
 
         data_matrix = data_df[marker_columns].to_numpy(dtype=np.float32, copy=True)
@@ -203,12 +216,24 @@ class ResearchPipelineExecutor:
         final_df.to_csv(csv_path, index=False)
 
         metadata_path = output_dir / "ruo_run_metadata.json"
+        input_fcs_path_value: str | List[str] | None = None
+        if len(resolved_input.input_fcs_files) == 1:
+            input_fcs_path_value = resolved_input.input_fcs_files[0]
+        elif resolved_input.input_fcs_files:
+            input_fcs_path_value = list(resolved_input.input_fcs_files)
+
         metadata_payload = {
             "qc_method": qc_method,
             "dimred_methods": dimred_methods,
             "clustering_methods": clustering_methods,
             "n_cells": int(len(final_df)),
             "n_markers": int(len(marker_columns)),
+            "input_fcs_path": input_fcs_path_value,
+            "gating_workspace_path": resolved_input.gating_workspace_path,
+            "target_population": resolved_input.target_population,
+            "data_context_mode": resolved_input.data_context_mode,
+            "events_before_context": int(resolved_input.input_events),
+            "events_after_context": int(resolved_input.selected_events),
         }
         metadata_path.write_text(
             json.dumps(metadata_payload, indent=2, ensure_ascii=False),
@@ -238,6 +263,15 @@ class ResearchPipelineExecutor:
         result.clustering_metrics = cluster_metrics
         result.config_snapshot = cfg.to_dict() if hasattr(cfg, "to_dict") else {}
         result.elapsed_seconds = float(time.perf_counter() - t0)
+        result.gating_report = [
+            {
+                "mode": resolved_input.data_context_mode,
+                "target_population": resolved_input.target_population,
+                "workspace_path": resolved_input.gating_workspace_path,
+                "n_before": int(resolved_input.input_events),
+                "n_after": int(resolved_input.selected_events),
+            }
+        ]
 
         _progress(ResearchRunStep.DONE)
         log.info(
@@ -254,6 +288,189 @@ class ResearchPipelineExecutor:
         if not folder.exists():
             return []
         return get_fcs_files(folder)
+
+    @staticmethod
+    def _normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """Normalise les colonnes FlowKit (tuples) vers des noms de marqueurs stables."""
+        normalized = df.copy()
+        normalized.columns = [
+            col[0] if isinstance(col, tuple) else str(col) for col in normalized.columns
+        ]
+        return normalized
+
+    def _load_analysis_dataframe(self, cfg: Any, files: List[Path]) -> ResolvedInputData:
+        """Résout le contexte de données (fichier complet ou population gated)."""
+        target_population = (
+            str(getattr(cfg, "target_population", "Root") or "Root").strip() or "Root"
+        )
+        gating_workspace_path = getattr(cfg, "gating_workspace_path", None)
+
+        use_gated_context = target_population.lower() != "root"
+        if use_gated_context:
+            if not gating_workspace_path:
+                raise ValueError(
+                    "target_population != 'Root' mais aucun gating_workspace_path n'est configuré."
+                )
+            log.info(
+                "[RUO] Extraction d'une population ciblée depuis le workspace de gating: %s",
+                target_population,
+            )
+            return self._load_gated_population_dataframe(
+                files=files,
+                workspace_path=str(gating_workspace_path),
+                target_population=target_population,
+            )
+
+        if not files:
+            raise ValueError("Aucun fichier FCS trouvé dans le dossier d'entrée.")
+
+        log.info("[RUO] Aucun contexte de gating spécifique, analyse du fichier complet")
+        adatas = load_fcs_files(files, condition="RUO")
+        if not adatas:
+            raise ValueError("Chargement FCS vide: aucun fichier exploitable.")
+
+        data_df = self._normalize_dataframe_columns(self._stack_adatas(adatas))
+        marker_columns = [c for c in data_df.columns if c != "__sample__"]
+        selected_events = int(len(data_df))
+        input_files = [str(p.resolve()) for p in files]
+        return ResolvedInputData(
+            dataframe=data_df,
+            marker_columns=marker_columns,
+            data_context_mode="full_file",
+            input_events=selected_events,
+            selected_events=selected_events,
+            input_fcs_files=input_files,
+            gating_workspace_path=None,
+            target_population="Root",
+        )
+
+    def _load_gated_population_dataframe(
+        self,
+        files: List[Path],
+        workspace_path: str,
+        target_population: str,
+    ) -> ResolvedInputData:
+        """Charge dynamiquement une population depuis un contexte de gating persisté."""
+        workspace = Path(workspace_path)
+        if not workspace.exists():
+            raise FileNotFoundError(f"Workspace de gating introuvable: {workspace}")
+
+        try:
+            from src.gui.viewer.gating_engine import PrismaEngineError, PrismaFlowEngine
+        except Exception as exc:
+            raise RuntimeError(
+                "FlowKit/PrismaFlowEngine indisponible: impossible de résoudre le contexte de gating."
+            ) from exc
+
+        runtime_files: List[Path] = list(files)
+        engine = PrismaFlowEngine()
+        suffix = workspace.suffix.lower()
+
+        try:
+            if suffix == ".wsp":
+                if not runtime_files:
+                    raise ValueError(
+                        "Aucun fichier FCS d'entrée disponible pour valider le workspace WSP."
+                    )
+                engine.load_wsp(workspace, fcs_dir=str(runtime_files[0].parent))
+            elif suffix in {".gml", ".xml"}:
+                if not runtime_files:
+                    raise ValueError(
+                        "Aucun fichier FCS d'entrée disponible pour appliquer le GatingML."
+                    )
+                engine.load_fcs_batch(runtime_files, make_first_active=True)
+                engine.load_gml(workspace)
+            elif suffix == ".json":
+                payload = json.loads(workspace.read_text(encoding="utf-8"))
+                runtime_files = [Path(str(p)) for p in (payload.get("fcs_files") or []) if str(p)]
+                if not runtime_files:
+                    runtime_files = list(files)
+                if not runtime_files:
+                    raise ValueError("Contexte de gating JSON invalide: aucun fichier FCS associé.")
+
+                missing_files = [str(p) for p in runtime_files if not p.exists()]
+                if missing_files:
+                    raise FileNotFoundError(
+                        "Fichiers FCS absents dans le contexte de gating: "
+                        + ", ".join(missing_files)
+                    )
+
+                gml_path_raw = payload.get("gatingml_path")
+                gml_path = (
+                    Path(str(gml_path_raw))
+                    if gml_path_raw
+                    else workspace.with_suffix(".gatingml.xml")
+                )
+                if not gml_path.is_absolute():
+                    gml_path = (workspace.parent / gml_path).resolve()
+                if not gml_path.exists():
+                    raise FileNotFoundError(f"GatingML associé introuvable: {gml_path}")
+
+                engine.load_fcs_batch(runtime_files, make_first_active=True)
+                engine.load_gml(gml_path)
+            else:
+                raise ValueError(
+                    "Format de workspace non supporté. Utilisez .wsp, .gml/.xml ou .json PRISMA."
+                )
+
+            engine.analyze(use_mp=False)
+            sample_ids = engine.get_sample_ids()
+            if not sample_ids:
+                raise ValueError("Aucun sample disponible après chargement du contexte de gating.")
+
+            gate_paths = engine.find_gate_paths(target_population)
+            if not gate_paths:
+                raise ValueError(f"Population cible absente dans le workspace: {target_population}")
+            if len(gate_paths) > 1:
+                raise ValueError(
+                    "Population cible ambiguë: plusieurs chemins trouvés pour "
+                    f"'{target_population}' ({gate_paths})."
+                )
+            gate_path = gate_paths[0]
+
+            selected_frames: List[pd.DataFrame] = []
+            input_events = 0
+            selected_events = 0
+
+            for sample_id in sample_ids:
+                raw_df = engine.get_raw_dataframe(sample_id=sample_id)
+                input_events += int(len(raw_df))
+
+                gated_df = engine.get_gate_dataframe(
+                    gate_name=target_population,
+                    gate_path=gate_path,
+                    sample_id=sample_id,
+                )
+                gated_df = self._normalize_dataframe_columns(gated_df)
+                if gated_df.empty:
+                    continue
+
+                gated_df = gated_df.copy()
+                gated_df["__sample__"] = str(sample_id)
+                selected_frames.append(gated_df)
+                selected_events += int(len(gated_df))
+
+            if selected_events <= 0 or not selected_frames:
+                raise ValueError(
+                    f"Extraction vide: la population '{target_population}' ne contient aucun événement."
+                )
+
+            data_df = pd.concat(selected_frames, axis=0, ignore_index=True)
+            marker_columns = [c for c in data_df.columns if c != "__sample__"]
+            return ResolvedInputData(
+                dataframe=data_df,
+                marker_columns=marker_columns,
+                data_context_mode="gated_population",
+                input_events=input_events,
+                selected_events=selected_events,
+                input_fcs_files=[str(p.resolve()) for p in runtime_files],
+                gating_workspace_path=str(workspace.resolve()),
+                target_population=target_population,
+            )
+        except PrismaEngineError as exc:
+            raise RuntimeError(
+                f"Erreur FlowKit lors de la résolution du contexte de gating: {exc}"
+            ) from exc
 
     @staticmethod
     def _stack_adatas(adatas: List[Any]) -> pd.DataFrame:

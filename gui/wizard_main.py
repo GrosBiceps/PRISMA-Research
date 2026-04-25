@@ -34,6 +34,7 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QPushButton,
+    QMessageBox,
     QScrollArea,
     QSizePolicy,
     QSplitter,
@@ -653,9 +654,7 @@ def _make_selector_panel(section_title: str, toggles: List[tuple]) -> tuple:
     )
     vl.addWidget(gpu_toggle)
 
-    note = QLabel(
-        "ℹ CPU = implémentation\nde référence (exacte)\n GPU = portage optimisé"
-    )
+    note = QLabel("ℹ CPU = implémentation\nde référence (exacte)\n GPU = portage optimisé")
     note.setObjectName("brandSubtitle")
     note.setWordWrap(True)
     note.setStyleSheet("font-size: 8pt; color: rgba(238,242,247,0.55); padding: 2px 0px;")
@@ -739,8 +738,11 @@ class _FolderDropZone(DropZoneLabel):
 class InputQCPage(_BaseStepPage):
     fcs_folder_changed = pyqtSignal(str)
     output_folder_changed = pyqtSignal(str)
+    open_gating_workspace_requested = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        self._gating_workspace_path: Optional[str] = None
+        self._available_populations: List[str] = ["Root"]
         super().__init__(0, parent)
 
     def _build_selector(self) -> QWidget:
@@ -831,6 +833,49 @@ class InputQCPage(_BaseStepPage):
 
         vl.addLayout(row_out)
 
+        # ── Contexte de données (gating workspace) ──────────────────────────
+        row_gate = QHBoxLayout()
+        row_gate.setSpacing(8)
+
+        lbl_gate = QLabel("CONTEXTE GATING")
+        lbl_gate.setObjectName("brandSubtitle")
+        lbl_gate.setFixedWidth(110)
+        row_gate.addWidget(lbl_gate)
+
+        gate_box = QWidget()
+        gate_vl = QVBoxLayout(gate_box)
+        gate_vl.setContentsMargins(0, 0, 0, 0)
+        gate_vl.setSpacing(6)
+
+        self._btn_open_gating_workspace = QPushButton("🎯 Ouvrir l'Espace de Gating")
+        self._btn_open_gating_workspace.setObjectName("ghostBtn")
+        self._btn_open_gating_workspace.clicked.connect(
+            lambda: self.open_gating_workspace_requested.emit()
+        )
+        gate_vl.addWidget(self._btn_open_gating_workspace)
+
+        gate_hl = QHBoxLayout()
+        gate_hl.setContentsMargins(0, 0, 0, 0)
+        gate_hl.setSpacing(8)
+
+        lbl_target = QLabel("Population cible pour l'analyse")
+        lbl_target.setObjectName("brandSubtitle")
+        lbl_target.setFixedWidth(190)
+        gate_hl.addWidget(lbl_target)
+
+        self._combo_target_population = DarkComboBox()
+        self._combo_target_population.addItem("Toutes les cellules (Root)", "Root")
+        self._combo_target_population.setEnabled(False)
+        gate_hl.addWidget(self._combo_target_population, 1)
+        gate_vl.addLayout(gate_hl)
+
+        self._lbl_gating_status = QLabel("Aucun workspace de gating actif")
+        self._lbl_gating_status.setObjectName("brandSubtitle")
+        gate_vl.addWidget(self._lbl_gating_status)
+
+        row_gate.addWidget(gate_box, 1)
+        vl.addLayout(row_gate)
+
         return card
 
     def _browse_fcs(self) -> None:
@@ -851,6 +896,71 @@ class InputQCPage(_BaseStepPage):
     def output_folder(self) -> str:
         return self._drop_output.folder
 
+    @property
+    def target_population(self) -> str:
+        if self._combo_target_population.count() == 0:
+            return "Root"
+        data = self._combo_target_population.currentData()
+        if data is None:
+            return "Root"
+        target = str(data).strip()
+        return target or "Root"
+
+    @property
+    def gating_workspace_path(self) -> Optional[str]:
+        return self._gating_workspace_path
+
+    def set_gating_context(
+        self,
+        workspace_path: str,
+        populations: List[str],
+        preferred_population: Optional[str] = None,
+    ) -> None:
+        """Met à jour le contexte de gating affiché dans la page d'entrée."""
+        cleaned: List[str] = ["Root"]
+        for pop in populations:
+            p = str(pop).strip()
+            if p and p not in cleaned:
+                cleaned.append(p)
+
+        previous = preferred_population or self.target_population
+        self._gating_workspace_path = str(workspace_path)
+        self._available_populations = cleaned
+
+        self._combo_target_population.blockSignals(True)
+        self._combo_target_population.clear()
+        self._combo_target_population.addItem("Toutes les cellules (Root)", "Root")
+        for pop in cleaned:
+            if pop == "Root":
+                continue
+            self._combo_target_population.addItem(pop, pop)
+
+        target_to_select = previous if previous in cleaned else "Root"
+        idx = self._combo_target_population.findData(target_to_select)
+        if idx < 0:
+            idx = 0
+        self._combo_target_population.setCurrentIndex(idx)
+        self._combo_target_population.setEnabled(True)
+        self._combo_target_population.blockSignals(False)
+
+        self._lbl_gating_status.setText(
+            f"Workspace actif: {Path(self._gating_workspace_path).name}"
+        )
+
+    def clear_gating_context(self) -> None:
+        """Réinitialise le contexte de gating (fallback robuste vers Root)."""
+        self._gating_workspace_path = None
+        self._available_populations = ["Root"]
+
+        self._combo_target_population.blockSignals(True)
+        self._combo_target_population.clear()
+        self._combo_target_population.addItem("Toutes les cellules (Root)", "Root")
+        self._combo_target_population.setCurrentIndex(0)
+        self._combo_target_population.setEnabled(False)
+        self._combo_target_population.blockSignals(False)
+
+        self._lbl_gating_status.setText("Aucun workspace de gating actif")
+
     def _on_toggle(self, key: str, visible: bool) -> None:
         idx = self._tab_map.get(key)
         if idx is not None:
@@ -867,6 +977,13 @@ class InputQCPage(_BaseStepPage):
         wizard_cfg["qc_params"] = {
             key: self._params_for_method(key) for key in cfg.qc_methods_enabled
         }
+
+        if self.gating_workspace_path:
+            cfg.gating_workspace_path = self.gating_workspace_path
+            cfg.target_population = self.target_population or "Root"
+        else:
+            cfg.gating_workspace_path = None
+            cfg.target_population = "Root"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -937,8 +1054,8 @@ class DimRedPage(_BaseStepPage):
             "Algorithmes",
             [
                 ("visne", "viSNE  [GPU+/Réf:CPU]", True),
-                ("umap",  "UMAP   [GPU+/Réf:CPU]", True),
-                ("phate", "PHATE  [Réf:CPU]",       False),
+                ("umap", "UMAP   [GPU+/Réf:CPU]", True),
+                ("phate", "PHATE  [Réf:CPU]", False),
             ],
         )
         for key in self._toggles:
@@ -998,11 +1115,11 @@ class ClusteringPage(_BaseStepPage):
         panel, self._toggles = _make_selector_panel(
             "Algorithmes",
             [
-                ("flowsom",    "FlowSOM      [Réf:CPU]",       True),
-                ("phenograph", "PhenoGraph   [GPU+/Réf:CPU]",  False),
-                ("hdbscan",    "HDBSCAN      [GPU+/Réf:CPU]",  False),
-                ("parc",       "PARC         [Réf:CPU]",       False),
-                ("spade",      "SPADE        [Réf:CPU]",       False),
+                ("flowsom", "FlowSOM      [Réf:CPU]", True),
+                ("phenograph", "PhenoGraph   [GPU+/Réf:CPU]", False),
+                ("hdbscan", "HDBSCAN      [GPU+/Réf:CPU]", False),
+                ("parc", "PARC         [Réf:CPU]", False),
+                ("spade", "SPADE        [Réf:CPU]", False),
             ],
         )
         for key in self._toggles:
@@ -1222,6 +1339,8 @@ class PrismaWizard(QMainWindow):
 
         self._current_step = 0
         self._canvas_visible = True
+        self._gating_win: Optional[QMainWindow] = None
+        self._gating_workspace_widget: Optional[Any] = None
 
         self._build_ui()
         self._navigate(0)
@@ -1261,8 +1380,9 @@ class PrismaWizard(QMainWindow):
         # Pages
         self._stack = QStackedWidget()
         self._stack.setObjectName("stepContent")
+        self._input_page = InputQCPage()
         self._pages: List[_BaseStepPage] = [
-            InputQCPage(),
+            self._input_page,
             GatingPage(),
             DimRedPage(),
             ClusteringPage(),
@@ -1333,6 +1453,10 @@ class PrismaWizard(QMainWindow):
         sb.addWidget(self._status_lbl)
 
         self._worker = None
+
+        # Wiring du contexte de données (gating) en mode non linéaire.
+        self._input_page.open_gating_workspace_requested.connect(self._open_gating_workspace)
+        self._input_page.fcs_folder_changed.connect(self._on_input_fcs_folder_changed)
 
     def _build_action_bar(self) -> QWidget:
         bar = QWidget()
@@ -1442,6 +1566,91 @@ class PrismaWizard(QMainWindow):
                 except Exception as exc:
                     log.warning("[wizard] Erreur sync page %s: %s", type(page).__name__, exc)
 
+    def _on_input_fcs_folder_changed(self, folder: str) -> None:
+        """Synchronise le workspace de gating avec un nouveau dossier FCS sélectionné."""
+        if not folder:
+            return
+
+        if self._input_page.gating_workspace_path:
+            self.log_output.append_log(
+                "[WARNING] Dossier FCS modifié: le contexte de gating courant est invalidé et la cible repasse à Root."
+            )
+            self._input_page.clear_gating_context()
+
+    def _open_gating_workspace(self) -> None:
+        """Ouvre l'espace de gating et le connecte au Wizard comme contexte persistant."""
+        fcs_folder = self._input_page.fcs_folder
+        if not fcs_folder:
+            QMessageBox.warning(
+                self,
+                "Contexte de données requis",
+                "Sélectionnez d'abord un dossier FCS avant d'ouvrir l'espace de gating.",
+            )
+            return
+
+        if self._gating_win is None or self._gating_workspace_widget is None:
+            try:
+                from src.gui.viewer.gating_workspace import PrismaGatingWorkspace
+
+                self._gating_workspace_widget = PrismaGatingWorkspace()
+                self._gating_workspace_widget.gatingContextSaved.connect(
+                    self._on_gating_context_saved
+                )
+
+                self._gating_win = QMainWindow(self)
+                self._gating_win.setWindowTitle("PRISMA Gating Workspace")
+                self._gating_win.resize(1500, 900)
+                self._gating_win.setCentralWidget(self._gating_workspace_widget)
+            except Exception as exc:
+                QMessageBox.critical(
+                    self,
+                    "Erreur ouverture workspace",
+                    f"Impossible d'ouvrir PrismaGatingWorkspace:\n{exc}",
+                )
+                return
+
+        try:
+            assert self._gating_workspace_widget is not None
+            if self._input_page.gating_workspace_path:
+                self._gating_workspace_widget.load_workspace_state(
+                    self._input_page.gating_workspace_path,
+                    fallback_fcs_folder=fcs_folder,
+                )
+            else:
+                self._gating_workspace_widget.set_input_source_fcs(fcs_folder)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Contexte de gating",
+                (
+                    "Le workspace de gating a été ouvert, mais le chargement initial a échoué.\n"
+                    f"Détail: {exc}\n\n"
+                    "Le Wizard restera sur Root tant que le contexte n'est pas sauvegardé."
+                ),
+            )
+
+        assert self._gating_win is not None
+        self._gating_win.show()
+        self._gating_win.raise_()
+        self._gating_win.activateWindow()
+
+    def _on_gating_context_saved(self, workspace_path: str, populations: list) -> None:
+        """Réception du contrat Workspace -> Wizard (path + populations disponibles)."""
+        previous = self._input_page.target_population
+        cleaned = [str(p).strip() for p in populations if str(p).strip()]
+        if "Root" not in cleaned:
+            cleaned.insert(0, "Root")
+
+        self._input_page.set_gating_context(
+            workspace_path=workspace_path,
+            populations=cleaned,
+            preferred_population=previous,
+        )
+        self.log_output.append_log(
+            "[INFO] Contexte de gating synchronisé: %s | populations=%d"
+            % (workspace_path, len(cleaned))
+        )
+
     def _on_run(self) -> None:
         from gui.workers import PipelineWorker
 
@@ -1474,8 +1683,8 @@ class PrismaWizard(QMainWindow):
             # Chaque page devrait implémenter sync_to_config(cfg) pour remplir ses paramètres
             self._sync_pages_to_config(cfg)
             self.log_output.append_log(
-                "[INFO] Config RUO: QC=%s | DimRed=%s | Clustering=%s"
-                % (cfg.qc_method, cfg.dimred_method, cfg.clustering_method)
+                "[INFO] Config RUO: QC=%s | DimRed=%s | Clustering=%s | Target=%s"
+                % (cfg.qc_method, cfg.dimred_method, cfg.clustering_method, cfg.target_population)
             )
 
         except Exception as exc:
