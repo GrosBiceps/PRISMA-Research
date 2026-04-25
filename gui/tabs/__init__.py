@@ -36,9 +36,9 @@ import matplotlib
 
 matplotlib.use("Qt5Agg")
 
-from gui.widgets.mrd_gauge import MRDGauge
-from gui.widgets.mrd_node_table import MRDNodeTable
-from gui.adapters.mrd_adapter import adapt_mrd_result, adapt_all_nodes
+from src.legacy_clinical.mrd_gauge import MRDGauge
+from src.legacy_clinical.mrd_node_table import MRDNodeTable
+from src.legacy_clinical.mrd_adapter import adapt_mrd_result, adapt_all_nodes
 
 # â”€â”€ PRISMA v2.0 palette (replaces Catppuccin Mocha) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _SURFACE0 = "#0C1220"  # --surface

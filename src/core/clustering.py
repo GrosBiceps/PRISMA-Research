@@ -40,65 +40,8 @@ except ImportError:
     _FLOWSOM_AVAILABLE = False
     warnings.warn("flowsom non installé: pip install flowsom")
 
-def _resolve_gpu_module_path() -> str | None:
-    """
-    Résout le chemin du module GPU FlowSOMEstimator de manière portable.
-
-    Stratégie (priorité décroissante) :
-      1. Variable d'environnement FLOWSOM_GPU_PATH — portable, définie au lancement.
-      2. Racine du package détectée via importlib.resources / __spec__ — stable
-         en mode développement et après PyInstaller.
-
-    Retourne None si aucun chemin valide n'est trouvé.
-    """
-    import os
-    import sys
-
-    # Priorité 1 : variable d'environnement explicite (portable, recommandé en prod)
-    env_path = os.environ.get("FLOWSOM_GPU_PATH")
-    if env_path:
-        return env_path
-
-    # Priorité 2 : remontée depuis __file__ du module courant.
-    # FlowSomGpu peut se trouver N niveaux au-dessus de flowsom_pipeline_pro
-    # (ex: Documents/FlowSom/FlowSomGpu/ alors que le package est dans
-    #  Documents/FlowSom/Perplexity/flowsom_pipeline_pro/).
-    # On remonte jusqu'à 6 niveaux depuis ce fichier pour le trouver.
-    try:
-        import os.path as osp
-        current = osp.dirname(osp.abspath(__file__))
-        for _ in range(6):
-            if osp.isdir(osp.join(current, "FlowSomGpu")):
-                return current
-            current = osp.dirname(current)
-    except Exception:
-        pass
-
-    # Priorité 3 : racine du package installé via __spec__
-    try:
-        import importlib.util
-        spec = importlib.util.find_spec("flowsom_pipeline_pro")
-        if spec is not None and spec.submodule_search_locations:
-            pkg_root = str(list(spec.submodule_search_locations)[0])
-            import os.path as osp
-            candidate = osp.dirname(pkg_root)
-            if osp.isdir(osp.join(candidate, "FlowSomGpu")):
-                return candidate
-    except Exception:
-        pass
-
-    return None
-
-
 try:
-    import sys
-    import os
-
-    _gpu_path = _resolve_gpu_module_path()
-    if _gpu_path is not None and _gpu_path not in sys.path:
-        sys.path.insert(0, _gpu_path)
-    from FlowSomGpu.models import GPUFlowSOMEstimator
-
+    from src.prisma.core.flowsom_gpu.models import GPUFlowSOMEstimator
     _GPU_AVAILABLE = True
 except ImportError as _gpu_import_err:
     _GPU_AVAILABLE = False

@@ -29,7 +29,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from src.analysis.mrd_calculator import MRDResult
+from src.legacy_clinical.mrd_calculator import MRDResult
 from src.io.fcs_writer import export_to_fcs_kaluza
 from src.utils.logger import get_logger
 

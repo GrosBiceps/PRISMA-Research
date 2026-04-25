@@ -59,7 +59,7 @@ from src.models.sample import FlowSample
 from src.models.pipeline_result import PipelineResult
 from src.services.preprocessing_service import preprocess_combined
 from src.services.clustering_service import select_markers_for_clustering
-from src.pipeline.pipeline_executor import (
+from src.legacy_clinical.pipeline_executor_legacy import (
     FlowSOMPipeline,
     PipelineCheckpointManager,
 )

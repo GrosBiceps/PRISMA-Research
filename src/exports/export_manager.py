@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, Optional
 
 import pandas as pd
 
-from exports.heatmaps import save_cluster_heatmap
+from src.exports.heatmaps import save_cluster_heatmap
 
 logger = logging.getLogger(__name__)
 

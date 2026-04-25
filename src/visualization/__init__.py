@@ -34,7 +34,7 @@ from .flowsom_plots import (
     plot_som_grid_plotly,
 )
 from .html_report import generate_html_report, fig_to_base64, plotly_to_html_div
-from .mrd_radar import plot_mrd_blast_radar_final
+from src.legacy_clinical.mrd_radar import plot_mrd_blast_radar_final
 from .population_viz import (
     plot_blast_heatmap,
     plot_blast_radar,
