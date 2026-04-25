@@ -30,6 +30,15 @@ import numpy as np
 import pandas as pd
 
 try:
+    from PyQt5.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, QMetaObject, Qt
+    _QT_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _QT_AVAILABLE = False
+    QObject = object  # type: ignore[assignment,misc]
+    QRunnable = object  # type: ignore[assignment,misc]
+    QThreadPool = None  # type: ignore[assignment]
+
+try:
     import flowkit as fk
     from flowkit import gates as fk_gates
     from flowkit import transforms as fk_transforms
@@ -167,7 +176,39 @@ class GateHierarchyNode:
 # ---------------------------------------------------------------------------
 
 
-class PrismaFlowEngine:
+class _AnalysisWorker(QRunnable if _QT_AVAILABLE else object):  # type: ignore[misc]
+    """Worker QRunnable pour l'analyse FlowKit asynchrone."""
+
+    class _Signals(QObject if _QT_AVAILABLE else object):  # type: ignore[misc]
+        if _QT_AVAILABLE:
+            finished = pyqtSignal(str)   # sample_id
+            error = pyqtSignal(str, str) # sample_id, error_message
+
+        def __init__(self) -> None:
+            if _QT_AVAILABLE:
+                super().__init__()
+
+    def __init__(self, engine: "PrismaFlowEngine", sample_id: Optional[str]) -> None:
+        if _QT_AVAILABLE:
+            super().__init__()
+            self.setAutoDelete(True)
+        self._engine = engine
+        self._sample_id = sample_id
+        self.signals = _AnalysisWorker._Signals()
+
+    def run(self) -> None:  # type: ignore[override]
+        sid = self._sample_id or ""
+        try:
+            self._engine._run_analyze_sync(sample_id=self._sample_id)
+            if _QT_AVAILABLE:
+                self.signals.finished.emit(sid)
+        except Exception as exc:
+            _logger.warning("AnalysisWorker error: %s", exc)
+            if _QT_AVAILABLE:
+                self.signals.error.emit(sid, str(exc))
+
+
+class PrismaFlowEngine(QObject if _QT_AVAILABLE else object):  # type: ignore[misc]
     """
     Façade FlowKit dual-backend (Session + Workspace) pour PrismaGatingViewer.
 
@@ -175,13 +216,28 @@ class PrismaFlowEngine:
     L'API commune est utilisée directement ; les méthodes spécifiques à chaque
     backend sont appelées via _is_workspace() / _as_session() / _as_workspace().
 
+    Signaux Qt :
+      gatingStrategyChanged(gate_id, change_type) — "added"|"modified"|"removed"
+      analysisCompleted(sample_id)
+      analysisError(sample_id, error_message)
+
     Extensions PRISMA non natives FlowKit :
       - time_gate()              : filtrage sur canal Time
       - compute_spillover_matrix(): calcul spillover depuis single-stained
       - load_facsdiva_xml()      : import FACSDiva XML
     """
 
-    def __init__(self) -> None:
+    if _QT_AVAILABLE:
+        gatingStrategyChanged = pyqtSignal(str, str)  # gate_id, change_type
+        analysisCompleted = pyqtSignal(str)            # sample_id
+        analysisError = pyqtSignal(str, str)           # sample_id, error_message
+
+    def __init__(self, parent=None) -> None:
+        if _QT_AVAILABLE:
+            try:
+                super().__init__(parent)
+            except TypeError:
+                super().__init__()
         if FLOWKIT_AVAILABLE and fk is not None:
             self._backend = fk.Session()
         else:
@@ -191,8 +247,15 @@ class PrismaFlowEngine:
         self._active_group: Optional[str] = None
         self._transform_specs: Dict[str, TransformSpec] = {}
         self._comp_matrix_ids: List[str] = []
+        # Registre (gate_id → (x_channel, y_channel)) — source de vérité dimensionnelle
+        self._gate_dimensions: Dict[str, Tuple[str, Optional[str]]] = {}
+        # Cache membership : (gate_id, sample_id) → np.ndarray[bool]
+        self._membership_cache: Dict[Tuple[str, str], np.ndarray] = {}
+        # File d'attente analyse async
+        self._analysis_pending: bool = False
+        self._pending_sample_id: Optional[str] = None
         if FLOWKIT_AVAILABLE:
-            _logger.info("PrismaFlowEngine initialisé")
+            _logger.info("PrismaFlowEngine initialisé (QObject)")
         else:
             _logger.warning(
                 "PrismaFlowEngine initialisé en mode dégradé: FlowKit indisponible (%s)",
@@ -253,6 +316,221 @@ class PrismaFlowEngine:
     @property
     def active_group(self) -> Optional[str]:
         return self._active_group
+
+    # ------------------------------------------------------------------
+    # API compatibilité dimensionnelle (source de vérité des gates)
+    # ------------------------------------------------------------------
+
+    def gate_dimensions(self, gate_id: str) -> Optional[Tuple[str, Optional[str]]]:
+        """Retourne (x_channel, y_channel) de la gate, ou None si non enregistrée."""
+        return self._gate_dimensions.get(gate_id)
+
+    def is_gate_compatible_with(self, gate_id: str, x_ch: str, y_ch: Optional[str]) -> bool:
+        """True si la gate est définie sur exactement ces dimensions."""
+        dims = self._gate_dimensions.get(gate_id)
+        if dims is None:
+            return False
+        return dims[0] == x_ch and dims[1] == (y_ch or None)
+
+    def get_compatible_gate_ids(self, x_ch: str, y_ch: Optional[str]) -> List[str]:
+        """Retourne tous les gate_ids compatibles avec les axes donnés."""
+        return [
+            gid for gid, dims in self._gate_dimensions.items()
+            if dims[0] == x_ch and dims[1] == (y_ch or None)
+        ]
+
+    def _register_gate_dimensions(
+        self,
+        gate_id: str,
+        x_ch: str,
+        y_ch: Optional[str],
+    ) -> None:
+        self._gate_dimensions[gate_id] = (x_ch, y_ch or None)
+
+    def _unregister_gate_dimensions(self, gate_id: str) -> None:
+        self._gate_dimensions.pop(gate_id, None)
+
+    def _invalidate_membership_cache(self, sample_id: Optional[str] = None) -> None:
+        if sample_id:
+            keys = [k for k in self._membership_cache if k[1] == sample_id]
+        else:
+            keys = list(self._membership_cache.keys())
+        for k in keys:
+            del self._membership_cache[k]
+
+    def get_gate_membership_cached(
+        self,
+        gate_id: str,
+        sample_id: str,
+        gate_path: Optional[Tuple[str, ...]] = None,
+    ) -> Optional[np.ndarray]:
+        """Membership array avec cache. Invalider via _invalidate_membership_cache()."""
+        key = (gate_id, sample_id)
+        if key not in self._membership_cache:
+            try:
+                arr = self._backend.get_gate_membership(sample_id, gate_id, gate_path=gate_path)
+                self._membership_cache[key] = np.asarray(arr, dtype=bool).flatten()
+            except Exception as exc:
+                _logger.debug("get_gate_membership_cached '%s': %s", gate_id, exc)
+                return None
+        return self._membership_cache[key]
+
+    def get_gate_vertices(self, gate_id: str) -> Optional[List[Tuple[float, float]]]:
+        """
+        Retourne les vertices d'une gate depuis FlowKit.
+        Supporte PolygonGate et RectangleGate. Retourne None sinon.
+        """
+        try:
+            paths = self.find_gate_paths(gate_id)
+            gate_path = paths[0] if paths else None
+            gate_obj = self._backend.get_gate(gate_id, gate_path=gate_path)
+            if gate_obj is None:
+                return None
+            cls_name = type(gate_obj).__name__
+            if "Polygon" in cls_name:
+                # FlowKit PolygonGate.vertices = list of (x, y)
+                verts = getattr(gate_obj, "vertices", None)
+                if verts is not None:
+                    return [(float(v[0]), float(v[1])) for v in verts]
+            if "Rectangle" in cls_name:
+                dims = getattr(gate_obj, "dimensions", [])
+                if len(dims) >= 2:
+                    x_min = getattr(dims[0], "min", None)
+                    x_max = getattr(dims[0], "max", None)
+                    y_min = getattr(dims[1], "min", None)
+                    y_max = getattr(dims[1], "max", None)
+                    if None not in (x_min, x_max, y_min, y_max):
+                        return [
+                            (float(x_min), float(y_min)),
+                            (float(x_max), float(y_min)),
+                            (float(x_max), float(y_max)),
+                            (float(x_min), float(y_max)),
+                        ]
+        except Exception as exc:
+            _logger.debug("get_gate_vertices '%s': %s", gate_id, exc)
+        return None
+
+    def get_gate_vertices_in_transform_space(
+        self, gate_id: str, transform_id: Optional[str]
+    ) -> Optional[List[Tuple[float, float]]]:
+        """
+        Retourne les vertices d'une gate dans l'espace transformé courant.
+
+        Pour l'instant, retourne get_gate_vertices() directement : les vertices
+        FlowKit sont déjà en coordonnées transformées lors de la création via
+        create_polygon_gate_from_vertices avec transform_ref.
+
+        Limitation : si transform_id diffère de celui utilisé lors de la création,
+        les vertices retournés sont dans l'espace de création d'origine et non dans
+        l'espace de la nouvelle transformation. Un recalcul serait nécessaire ici
+        via la transformation inverse puis forward, ce qui n'est pas encore implémenté.
+
+        Args:
+            gate_id:      Identifiant de la gate.
+            transform_id: ID de transformation courant (ignoré pour l'instant).
+
+        Returns:
+            Liste de tuples (x, y) ou None si la gate est introuvable.
+        """
+        return self.get_gate_vertices(gate_id)
+
+    def get_population_df_sampled(
+        self,
+        gate_node: Tuple[str, ...],
+        max_events: int = 50_000,
+        sample_id: Optional[str] = None,
+        transform_id: Optional[str] = None,
+        comp_matrix_id: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """
+        Comme get_population_df() mais avec sous-échantillonnage stratifié pour le rendu.
+
+        Les calculs statistiques doivent utiliser get_population_df() (sans limitation).
+        Sous-échantillonne via df.sample(min(max_events, len(df)), random_state=42).
+
+        Args:
+            gate_node:      Chemin vers la gate (ex: ('root',) ou ('Leuco', 'root')).
+            max_events:     Nombre maximum d'événements dans le DataFrame retourné.
+            sample_id:      Sample actif si None.
+            transform_id:   ID de transformation.
+            comp_matrix_id: ID de matrice de compensation.
+
+        Returns:
+            DataFrame sous-échantillonné prêt pour l'affichage.
+        """
+        df = self.get_population_df(
+            gate_node,
+            sample_id=sample_id,
+            transform_id=transform_id,
+            comp_matrix_id=comp_matrix_id,
+        )
+        n = len(df)
+        if n <= max_events:
+            return df
+        return df.sample(max_events, random_state=42).reset_index(drop=True)
+
+    # ------------------------------------------------------------------
+    # Analyse asynchrone
+    # ------------------------------------------------------------------
+
+    def analyze_async(self, sample_id: Optional[str] = None) -> None:
+        """
+        Lance analyze() dans un QThreadPool. Émet analysisCompleted quand terminé.
+
+        File d'attente simple : si une analyse est déjà en cours, le sample_id
+        est mémorisé et relancé à la fin de l'analyse courante.
+        """
+        if not _QT_AVAILABLE:
+            self._run_analyze_sync(sample_id=sample_id)
+            return
+
+        if getattr(self, "_analysis_pending", False):
+            # Une analyse tourne déjà — mémoriser la demande
+            self._pending_sample_id: Optional[str] = sample_id
+            _logger.debug(
+                "analyze_async: analyse déjà en cours — sample '%s' mis en attente", sample_id
+            )
+            return
+
+        self._analysis_pending = True
+        self._pending_sample_id = None
+        worker = _AnalysisWorker(self, sample_id)
+        worker.signals.finished.connect(self._on_analysis_finished)
+        worker.signals.error.connect(self._on_analysis_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _emit_strategy_changed(self, gate_id: str, change_type: str) -> None:
+        """Émet gatingStrategyChanged de façon défensive (guard si QObject non init)."""
+        if not _QT_AVAILABLE:
+            return
+        try:
+            self.gatingStrategyChanged.emit(gate_id, change_type)
+        except RuntimeError:
+            pass
+
+    def _on_analysis_finished(self, sample_id: str) -> None:
+        self._analysis_pending = False
+        self._invalidate_membership_cache(sample_id=sample_id or None)
+        try:
+            self.analysisCompleted.emit(sample_id)
+        except RuntimeError:
+            pass
+        # Relancer si une analyse était en attente
+        pending = getattr(self, "_pending_sample_id", None)
+        if pending is not None:
+            self._pending_sample_id = None
+            _logger.debug("analyze_async: relancement analyse en attente pour '%s'", pending)
+            self.analyze_async(pending)
+
+    def _on_analysis_error(self, sample_id: str, error_msg: str) -> None:
+        try:
+            self.analysisError.emit(sample_id, error_msg)
+        except RuntimeError:
+            pass
+
+    def _run_analyze_sync(self, sample_id: Optional[str] = None) -> None:
+        """Analyse synchrone interne — appelé depuis le worker thread."""
+        self.analyze(sample_id=sample_id, use_mp=False, verbose=False)
 
     def set_active_sample(self, sample_id: str) -> None:
         self._assert_sample_exists(sample_id)
@@ -1144,7 +1422,9 @@ class PrismaFlowEngine:
         dim_y = self._build_dimension(y_channel, comp_ref=comp_ref, transform_ref=transform_ref)
         gate = fk_gates.PolygonGate(gate_name, [dim_x, dim_y], vertices)
         self._as_session().add_gate(gate, gate_path, sample_id=sample_id)
+        self._register_gate_dimensions(gate_name, x_channel, y_channel)
         _logger.info("PolygonGate : %s @ %s (sample=%s)", gate_name, gate_path, sample_id)
+        self._emit_strategy_changed(gate_name, "added")
 
     def add_rectangle_gate(
         self,
@@ -1202,7 +1482,12 @@ class PrismaFlowEngine:
             gate = fk_gates.RectangleGate(gate_name, [dim_x, dim_y])
 
         self._as_session().add_gate(gate, gate_path, sample_id=sample_id)
+        if is_1d:
+            self._register_gate_dimensions(gate_name, x_channel, None)
+        else:
+            self._register_gate_dimensions(gate_name, x_channel, y_channel)
         _logger.info("RectangleGate %s : %s @ %s", "1D" if is_1d else "2D", gate_name, gate_path)
+        self._emit_strategy_changed(gate_name, "added")
 
     def add_ellipsoid_gate(
         self,
@@ -1288,7 +1573,9 @@ class PrismaFlowEngine:
 
         gate = fk_gates.QuadrantGate(gate_name, [div_x, div_y], [q_pp, q_np, q_nn, q_pn])
         self._as_session().add_gate(gate, gate_path, sample_id=sample_id)
+        self._register_gate_dimensions(gate_name, x_channel, y_channel)
         _logger.info("QuadrantGate : %s @ %s", gate_name, gate_path)
+        self._emit_strategy_changed(gate_name, "added")
 
     def add_boolean_gate(
         self,
@@ -1335,7 +1622,10 @@ class PrismaFlowEngine:
             sample_id=sample_id,
             keep_children=keep_children,
         )
+        self._unregister_gate_dimensions(gate_name)
+        self._invalidate_membership_cache(sample_id=sample_id)
         _logger.info("Gate supprimée : %s (sample=%s)", gate_name, sample_id)
+        self._emit_strategy_changed(gate_name, "removed")
 
     def rename_gate(
         self,

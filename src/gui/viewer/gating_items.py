@@ -1,13 +1,16 @@
 """
 src/gui/viewer/gating_items.py — Objets graphiques de gating pour QGraphicsScene.
 
-Hiérarchie :
-  BaseGate           — interface commune (gate_id, nom, masque, sélection)
-    PolygonGate      — gate polygonale libre (QGraphicsPolygonItem)
+Rôle strict : représentation visuelle locale d'une gate dans un canvas PyQtGraph.
 
-Extensible vers :
-  RectangleGate      — hérite BaseGate, remplace QGraphicsPolygonItem par QGraphicsRectItem
-  QuadrantGate       — quatre régions définies par un point croisé
+Ces objets NE calculent PAS de membership. La vérité biologique vit exclusivement
+dans FlowKit via PrismaFlowEngine. PolygonGate ici ne sert qu'à :
+  - stocker les vertices pour la sérialisation de session
+  - afficher le contour graphique dans QGraphicsScene
+
+Hiérarchie :
+  BaseGate     — conteneur de vertices et identité visuelle
+  PolygonGate  — gate polygonale (QGraphicsPolygonItem)
 """
 
 from __future__ import annotations
@@ -15,8 +18,6 @@ from __future__ import annotations
 import uuid
 from typing import Callable, List, Optional, Tuple
 
-import numpy as np
-import pandas as pd
 from PyQt5.QtCore import QPointF, Qt
 from PyQt5.QtGui import QBrush, QColor, QPen, QPolygonF
 from PyQt5.QtWidgets import (
@@ -25,76 +26,6 @@ from PyQt5.QtWidgets import (
     QGraphicsTextItem,
 )
 
-# ---------------------------------------------------------------------------
-# Inclusion vectorisée point-dans-polygone
-# ---------------------------------------------------------------------------
-
-def _points_in_polygon(
-    xs: np.ndarray,
-    ys: np.ndarray,
-    poly_x: np.ndarray,
-    poly_y: np.ndarray,
-) -> np.ndarray:
-    """
-    Retourne un masque bool : True si (xs[i], ys[i]) est dans le polygone.
-
-    Stratégie :
-      1. shapely.vectorized.contains   (le plus rapide, ~O(N) via GEOS)
-      2. matplotlib.path.Path.contains_points (fallback vectorisé, ~O(N·V))
-      3. Ray-casting Python pur         (fallback de dernier recours)
-    """
-    verts_closed = list(zip(poly_x.tolist(), poly_y.tolist()))
-
-    # --- tentative shapely ---
-    try:
-        from shapely.geometry import Point, Polygon as ShapelyPolygon
-        from shapely.vectorized import contains  # shapely >= 2.0
-
-        poly = ShapelyPolygon(verts_closed)
-        return contains(poly, xs, ys)
-    except ImportError:
-        pass
-    except Exception:
-        pass
-
-    # --- tentative shapely < 2.0 (vectorized non disponible) ---
-    try:
-        from shapely.geometry import Polygon as ShapelyPolygon
-        poly = ShapelyPolygon(verts_closed)
-        return np.array([poly.contains(Point(x, y)) for x, y in zip(xs, ys)], dtype=bool)
-    except ImportError:
-        pass
-
-    # --- fallback matplotlib.path (toujours disponible dans ce projet) ---
-    try:
-        from matplotlib.path import Path as MplPath
-
-        verts = np.column_stack([poly_x, poly_y])
-        # Fermeture implicite : matplotlib exige le premier point répété
-        verts_closed_arr = np.vstack([verts, verts[0]])
-        path = MplPath(verts_closed_arr)
-        pts = np.column_stack([xs, ys])
-        return path.contains_points(pts)
-    except Exception:
-        pass
-
-    # --- fallback ray-casting Python pur ---
-    mask = np.zeros(len(xs), dtype=bool)
-    n_verts = len(poly_x)
-    for i, (px, py) in enumerate(zip(xs, ys)):
-        inside = False
-        j = n_verts - 1
-        for k in range(n_verts):
-            xi, yi = poly_x[k], poly_y[k]
-            xj, yj = poly_x[j], poly_y[j]
-            if ((yi > py) != (yj > py)) and (
-                px < (xj - xi) * (py - yi) / (yj - yi + 1e-12) + xi
-            ):
-                inside = not inside
-            j = k
-        mask[i] = inside
-    return mask
-
 
 # ---------------------------------------------------------------------------
 # Interface commune
@@ -102,60 +33,22 @@ def _points_in_polygon(
 
 class BaseGate:
     """
-    Interface minimale partagée par tous les types de gate.
+    Conteneur de vertices et identité visuelle d'une gate graphique.
 
-    N'hérite PAS de abc.ABC : PyQt5 (sip.wrappertype) est incompatible avec
-    ABCMeta → TypeError metaclass conflict. Duck typing via NotImplementedError.
-
-    Chaque sous-classe est aussi un QGraphicsItem (héritage multiple PyQt5).
+    Ne calcule PAS de membership — cette responsabilité appartient à FlowKit
+    via PrismaFlowEngine.get_gate_membership_cached().
     """
 
     def __init__(self, gate_id: str, name: str) -> None:
         self.gate_id: str = gate_id
         self.name: str = name
 
-    def compute_mask(
-        self,
-        events: pd.DataFrame,
-        x_channel: str,
-        y_channel: str,
-    ) -> np.ndarray:
-        """
-        Calcule le masque booléen des événements inclus dans cette gate.
-
-        Args:
-            events: DataFrame (N_events × N_channels).
-            x_channel: Colonne utilisée comme axe X.
-            y_channel: Colonne utilisée comme axe Y.
-
-        Returns:
-            ndarray bool de longueur N_events.
-        """
-        raise NotImplementedError(f"{type(self).__name__} doit implémenter compute_mask()")
-
     def data_vertices(
         self,
         pixel_to_data_fn: Callable[[float, float], Tuple[float, float]],
     ) -> List[Tuple[float, float]]:
-        """
-        Retourne les sommets de la gate en coordonnées données.
-
-        Args:
-            pixel_to_data_fn: Fonction (px, py) → (xd, yd).
-
-        Returns:
-            Liste de tuples (xd, yd).
-        """
+        """Retourne les sommets en coordonnées données via la fonction de transformation."""
         raise NotImplementedError(f"{type(self).__name__} doit implémenter data_vertices()")
-
-    def get_flowkit_gate(self) -> object:
-        """
-        Retourne l'objet FlowKit Gate correspondant à cette gate visuelle.
-
-        Chaque sous-classe doit retourner un fk.gates.* valide prêt à être
-        injecté dans Session.add_gate().
-        """
-        raise NotImplementedError(f"{type(self).__name__} doit implémenter get_flowkit_gate()")
 
 
 # ---------------------------------------------------------------------------
@@ -245,44 +138,9 @@ class PolygonGate(QGraphicsPolygonItem, BaseGate):
         if self._label is not None:
             self._label.setPlainText(name)
 
-    # ------------------------------------------------------------------
-    # BaseGate — compute_mask
-    # ------------------------------------------------------------------
-
-    def compute_mask(
-        self,
-        events: pd.DataFrame,
-        x_channel: str,
-        y_channel: str,
-    ) -> np.ndarray:
-        """
-        Calcule le masque booléen des événements inclus dans ce polygone.
-
-        Les sommets sont en coordonnées scène ; le canvas fournit
-        une transformée affine via FCSCanvas._data_to_pixel / _pixel_to_data.
-        Ici, la gate stocke ses sommets en coordonnées *données* (attribut
-        data_verts), mis à jour au moment de la création par FCSCanvas.
-
-        Si data_verts n'est pas défini (gate preview ou ancienne gate scène),
-        retourne un masque tout-False.
-        """
-        if not hasattr(self, "_data_verts") or self._data_verts is None:
-            return np.zeros(len(events), dtype=bool)
-
-        xs = events[x_channel].to_numpy(dtype=np.float64)
-        ys = events[y_channel].to_numpy(dtype=np.float64)
-        poly_x = np.array([v[0] for v in self._data_verts], dtype=np.float64)
-        poly_y = np.array([v[1] for v in self._data_verts], dtype=np.float64)
-
-        return _points_in_polygon(xs, ys, poly_x, poly_y)
-
     def set_data_verts(self, verts: List[Tuple[float, float]]) -> None:
-        """Enregistre les sommets en coordonnées données (appelé par FCSCanvas)."""
+        """Enregistre les sommets en coordonnées données (pour sérialisation de session)."""
         self._data_verts: List[Tuple[float, float]] = verts
-
-    # ------------------------------------------------------------------
-    # BaseGate — data_vertices
-    # ------------------------------------------------------------------
 
     def data_vertices(
         self,

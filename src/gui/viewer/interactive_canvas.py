@@ -131,6 +131,11 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         self._region_1d_gate_name: str = "Gate1D"
         self._region_1d_signal_name: Optional[str] = None
 
+        # density image item (ImageItem PyQtGraph)
+        self._density_image: Optional[pg.ImageItem] = None
+        # items backgate (liste de ScatterPlotItem par sous-population)
+        self._backgate_items: List[pg.ScatterPlotItem] = []
+
         self._setup_plot()
 
     # ------------------------------------------------------------------
@@ -417,6 +422,179 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             self.setLabel("bottom", x_channel)
             self.setLabel("left", "Count")
         self.autoRange()
+
+    def set_data_density(
+        self,
+        histogram: np.ndarray,
+        x_edges: np.ndarray,
+        y_edges: np.ndarray,
+    ) -> None:
+        """
+        Affiche un density plot depuis un histogram2d pré-calculé.
+        Utilisé par PlotWidgetPanel._render_2d() en mode DENSITY ou HYBRID.
+        L'ImageItem est positionné via setRect pour couvrir exactement la plage de données.
+        """
+        self.clear_data()
+
+        # Normalisation log1p pour révéler les populations rares
+        h_norm = np.log1p(histogram.astype(np.float32))
+        h_max = float(h_norm.max())
+        if h_max > 0:
+            h_norm = h_norm / h_max  # [0, 1]
+
+        # LUT turbo (256 niveaux)
+        indices = np.linspace(0, 1, 256, dtype=np.float32)
+        r_lut = np.clip((255 * (1.5 * indices - 0.5)), 0, 255).astype(np.uint8)
+        g_lut = np.clip((255 * (1.5 - np.abs(3.0 * indices - 1.5))), 0, 255).astype(np.uint8)
+        b_lut = np.clip((255 * (1.0 - 2.0 * indices)), 0, 255).astype(np.uint8)
+        a_lut = np.clip((80 + 175 * indices), 0, 255).astype(np.uint8)
+
+        lut = np.stack([r_lut, g_lut, b_lut, a_lut], axis=1)  # (256, 4)
+
+        # ImageItem : l'axe 0 = X, axe 1 = Y (transpose pour pyqtgraph)
+        item = pg.ImageItem(image=h_norm.T)
+        item.setLookupTable(lut)
+
+        x_min = float(x_edges[0])
+        x_max = float(x_edges[-1])
+        y_min = float(y_edges[0])
+        y_max = float(y_edges[-1])
+        x_width = x_max - x_min
+        y_height = y_max - y_min
+
+        from PyQt5.QtCore import QRectF
+        item.setRect(QRectF(x_min, y_min, x_width, y_height))
+
+        self._density_image = item
+        self.addItem(item)
+        self.autoRange()
+        _logger.debug(
+            "set_data_density: histogram %s, x=[%.3f,%.3f], y=[%.3f,%.3f]",
+            histogram.shape,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )
+
+    def set_data_backgate(
+        self,
+        parent_df: pd.DataFrame,
+        x_channel: str,
+        y_channel: str,
+        child_memberships: dict,
+        colors: dict,
+    ) -> None:
+        """
+        Affiche parent en gris semi-transparent, puis chaque sous-population colorée par-dessus.
+        Utilise pg.ScatterPlotItem distinct par sous-population.
+        Sous-échantillonnage MAX_SCATTER_PTS total réparti proportionnellement.
+
+        Args:
+            parent_df:        DataFrame de la population parente.
+            x_channel:        Canal X.
+            y_channel:        Canal Y.
+            child_memberships: {gate_id: np.ndarray[bool]} — masque dans parent_df.
+            colors:           {gate_id: str hex} — couleur de chaque population.
+        """
+        self.clear_data()
+        self._x_channel = x_channel
+        self._y_channel = y_channel
+
+        if x_channel not in parent_df.columns or y_channel not in parent_df.columns:
+            _logger.warning(
+                "set_data_backgate: canaux absents x='%s' y='%s'", x_channel, y_channel
+            )
+            return
+
+        xd_all = parent_df[x_channel].to_numpy(dtype=np.float32).flatten()
+        yd_all = parent_df[y_channel].to_numpy(dtype=np.float32).flatten()
+
+        valid = np.isfinite(xd_all) & np.isfinite(yd_all)
+        xd_all = xd_all[valid]
+        yd_all = yd_all[valid]
+
+        n_total = len(xd_all)
+        n_parent_show = min(MAX_SCATTER_PTS, n_total)
+
+        # Sous-échantillonnage parent
+        if n_total > n_parent_show:
+            rng = np.random.default_rng(42)
+            idx_parent = rng.choice(n_total, n_parent_show, replace=False)
+        else:
+            idx_parent = np.arange(n_total)
+
+        xd_parent = xd_all[idx_parent]
+        yd_parent = yd_all[idx_parent]
+
+        # Population parente en gris semi-transparent
+        parent_scatter = pg.ScatterPlotItem(
+            x=xd_parent,
+            y=yd_parent,
+            size=2,
+            pen=None,
+            brush=pg.mkColor(80, 80, 100, 60),
+        )
+        self.addItem(parent_scatter)
+        self._backgate_items.append(parent_scatter)
+
+        # Chaque sous-population colorée
+        n_children = len(child_memberships)
+        if n_children > 0:
+            max_per_child = max(1, MAX_SCATTER_PTS // n_children)
+        else:
+            max_per_child = MAX_SCATTER_PTS
+
+        for gate_id, mask in child_memberships.items():
+            try:
+                mask_arr = np.asarray(mask, dtype=bool).flatten()
+                if mask_arr.shape[0] != n_total:
+                    _logger.debug(
+                        "set_data_backgate: masque '%s' shape %d != parent %d",
+                        gate_id,
+                        mask_arr.shape[0],
+                        n_total,
+                    )
+                    continue
+
+                xd_child = xd_all[mask_arr]
+                yd_child = yd_all[mask_arr]
+                n_child = len(xd_child)
+
+                if n_child == 0:
+                    continue
+
+                if n_child > max_per_child:
+                    rng = np.random.default_rng(42)
+                    idx_c = rng.choice(n_child, max_per_child, replace=False)
+                    xd_child = xd_child[idx_c]
+                    yd_child = yd_child[idx_c]
+
+                color_hex = colors.get(gate_id, "#5BAAFF")
+                qcolor = pg.mkColor(color_hex)
+                qcolor.setAlpha(180)
+
+                child_scatter = pg.ScatterPlotItem(
+                    x=xd_child,
+                    y=yd_child,
+                    size=3,
+                    pen=None,
+                    brush=qcolor,
+                )
+                child_scatter.setToolTip(gate_id)
+                self.addItem(child_scatter)
+                self._backgate_items.append(child_scatter)
+            except Exception as exc:
+                _logger.debug("set_data_backgate child '%s' ignoré : %s", gate_id, exc)
+
+        self.getPlotItem().setLabel("bottom", self._x_label or x_channel)
+        self.getPlotItem().setLabel("left", self._y_label or y_channel)
+        self.autoRange()
+        _logger.debug(
+            "set_data_backgate: %d événements parents, %d sous-populations",
+            n_total,
+            n_children,
+        )
 
     # ------------------------------------------------------------------
     # API publique — modes interactifs
@@ -733,13 +911,25 @@ class InteractiveGatingCanvas(pg.PlotWidget):
     # ------------------------------------------------------------------
 
     def clear_data(self) -> None:
-        """Efface les données affichées (scatter/histo) mais garde les overlays."""
+        """Efface les données affichées (scatter/histo/density/backgate) mais garde les overlays."""
         if self._scatter is not None:
             self.removeItem(self._scatter)
             self._scatter = None
         if self._hist_bars is not None:
             self.removeItem(self._hist_bars)
             self._hist_bars = None
+        if self._density_image is not None:
+            try:
+                self.removeItem(self._density_image)
+            except Exception:
+                pass
+            self._density_image = None
+        for item in self._backgate_items:
+            try:
+                self.removeItem(item)
+            except Exception:
+                pass
+        self._backgate_items = []
         self._cancel_current_drawing()
 
     def clear_all(self) -> None:
