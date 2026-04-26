@@ -1,0 +1,358 @@
+# default_config.yaml — Configuration par défaut du pipeline FlowSOM Pro
+# Toutes les valeurs peuvent être surchargées par un fichier YAML utilisateur.
+# Toutes les constantes de config/constants.py sont exposées ici pour surcharge facile.
+
+pipeline_version: "4.0"
+
+paths:
+  healthy_folder: ""  # Dossier contenant les fichiers FCS de moelle normale (NBM) — à définir
+  patho_folder: ""    # Dossier contenant les fichiers FCS pathologiques — à définir
+  output_dir: ""      # Dossier de sortie des résultats — à définir
+
+analysis:
+  compare_mode: true         # true = comparer Sain vs Pathologique (doit être true pour les analyses différentielles)
+
+pregate:
+  apply: true
+  mode: "auto"              # auto (GMM) | manual (percentiles)
+  mode_blastes_vs_normal: true # true = gating asymétrique CD45 patho seulement
+  viable: true               # true = appliquer gating débris de base (SSC-A vs FSC-A)
+  singlets: true             # true = appliquer gating doublets de base (FSC-H vs FSC-A)
+  cd45: true # true = gating symétrique CD45 pour exclure les cellules matures (bas = plus inclusif, haut = plus strict)
+  cd34: false # false = pas de gating CD34 de base (optionnel, souvent peu fiable)
+
+pregate_advanced:
+  debris_min_percentile: 1.0   # Percentile inférieur pour exclure les débris (FSC/SSC)
+  debris_max_percentile: 99.0  # Percentile supérieur pour exclure les débris (FSC/SSC)
+  doublets_ratio_min: 0.6    # Ratio min FSC-H/FSC-A pour considérer comme singlet
+  doublets_ratio_max: 1.4   # Ratio max FSC-H/FSC-A pour considérer comme singlet
+  cd45_threshold_percentile: 5.0 # Percentile de coupure CD45 pour inclure plus ou moins de cellules (bas = plus inclusif)
+  cd34_threshold_percentile: 85.0 # Percentile de coupure CD34 pour inclure plus ou moins de blastes (haut = blastes plus purs)
+  cd34_use_ssc_filter: true   # true = utiliser un filtre supplémentaire sur SSC-A pour les blastes (exclure les CD34+ à SSC élevé qui sont souvent des cellules matures)
+  cd34_ssc_max_percentile: 60.0 # Percentile max de SSC-A pour les blastes (bas = blastes à faible granularité, plus typiques)
+  # GMM / AutoGating
+  gmm_max_samples: 200000     # Gate 1 (débris): nombre max de cellules pour fit/BIC GMM
+  ransac_r2_threshold: 0.85   # Seuil R² minimum pour valider la droite RANSAC singlets
+  ransac_mad_factor: 3.0      # Facteur MAD pour détecter les outliers RANSAC
+  # ── Méthode d'estimation de densité pour le gating viable (débris) ────────────────
+  # "GMM" = Gaussian Mixture Model (défaut) | "KDE" = Kernel Density Estimation
+  # Le KDE est plus fidèle aux données mais plus lent et moins paramétrable.
+  # Le GMM est recommandé car ses paramètres sont entièrement contrôlables ci-dessous.
+  density_method: "GMM"
+
+  # ── Paramètres KDE 1D pour le gating CD45 (méthode pied du pic) ───────────────────
+  # Utilisés uniquement en mode auto pour le gate G3_cd45.
+  # La méthode "pied du pic" est plus robuste que le GMM pour les distributions
+  # asymétriques (CD45+ dominant, CD45- minoritaire) typiques de la moelle osseuse.
+  #
+  # Algorithme : KDE Silverman adaptatif → lissage gaussien → recul depuis le pic
+  #              principal jusqu'à descendre sous seuil_relatif × max(densité).
+  # Fallback automatique : Otsu 1D sur histogramme log-normalisé si aucun pied détecté.
+  #
+  # kde_cd45_seuil_relatif : Fraction du maximum de densité définissant le "pied" du pic
+  #   - 0.02 → très permissif (seuil très à gauche, inclut plus de CD45-)
+  #   - 0.05 → valeur recommandée (5% du max = pied du grand pic CD45+)
+  #   - 0.10 → plus strict (monte plus haut sur le flanc du pic, exclut plus)
+  kde_cd45_seuil_relatif: 0.05
+
+  # kde_cd45_finesse : Facteur multiplicateur du bandwidth Silverman
+  #   - 0.3 → très fin (KDE très piqué, révèle les petites structures)
+  #   - 0.6 → valeur recommandée (bon compromis résolution / lissage)
+  #   - 1.0 → Silverman pur (très lissé, peut masquer la vallée CD45-)
+  kde_cd45_finesse: 0.6
+
+  # kde_cd45_sigma_smooth : Sigma du filtre gaussien appliqué après KDE (en points de grille)
+  #   - 5  → peu de lissage (courbe plus bruitée)
+  #   - 10 → valeur recommandée
+  #   - 20 → fort lissage (utile si beaucoup de bruit ou distribution très étalée)
+  kde_cd45_sigma_smooth: 10
+
+  # kde_cd45_n_grid : Nombre de points de la grille d'évaluation KDE
+  #   - 1000 → rapide, résolution réduite
+  #   - 4000 → valeur recommandée (précision suffisante pour la cytométrie)
+  #   - 8000 → très haute résolution (plus lent, utile pour des données très fines)
+  kde_cd45_n_grid: 4000
+
+  # kde_cd45_max_samples : Nombre max d'événements utilisés pour estimer la KDE CD45
+  #   - 10000 → rapide (défaut robuste sur gros jeux)
+  #   - 30000 → plus stable si distributions multimodales fines
+  #   - 80000 → très précis mais plus coûteux CPU/RAM
+  kde_cd45_max_samples: 10000
+  # ── Paramètres avancés du GMM ──────────────────────────────────────────────────────
+  # covariance_type contrôle la forme des clusters GMM :
+  #   "full"     : chaque cluster a sa propre matrice de covariance (défaut) — risque de sur-exclusion
+  #   "tied"     : tous les clusters partagent la même matrice (formes identiques) — plus robuste
+  #   "diag"     : covariance diagonale → gaussiennes restent compactes (recommandé si sur-exclusion des viables)
+  #   "spherical": chaque cluster est sphérique (forme la plus contrainte)
+  gmm_covariance_type: "full"   # Recommandé: "diag" ou "tied" si sur-exclusion des cellules viables
+  gmm_n_components_debris: 3    # Nombre de composantes GMM pour le gating débris (2 ou 3)
+  gmm_export_plot: true         # true = exporter un graphique des densités GMM (populations par cluster)
+
+flowsom:
+  xdim: 10             # Dimension X de la grille SOM (ex: 10, 15, 20, 25)
+  ydim: 10            # Dimension Y de la grille SOM (ex: 10, 15, 20, 25)
+  rlen: "auto"       # Nombre d'itérations d'apprentissage (ex: 10, 20, 50 ou "auto" pour adaptatif)
+  n_metaclusters: 8   # Nombre de métaclusters pour la classification finale (ex: 5, 8, 10 ou "auto" pour sélection automatique)
+  learning_rate: 0.05  # Taux d'apprentissage pour le SOM (ex: 0.01, 0.05, 0.1)
+  sigma: 1.5       # Largeur de voisinage pour le SOM (ex: 0.5, 1.0, 1.5)
+  n_iterations: 10 # Nombre d'itérations pour le clustering final (ex: 10, 20, 50)
+  seed: 42      # Seed pour la reproductibilité (ex: 0, 42, 123)
+
+auto_clustering:  
+  enabled: false # true = activer la sélection automatique du nombre de métaclusters basée sur la stabilité et la silhouette
+  min_clusters: 5 # Nombre minimum de métaclusters à tester pour la sélection automatique
+  max_clusters: 20 # Nombre maximum de métaclusters à tester pour la sélection automatique
+  n_bootstrap: 10 # Nombre de rééchantillonnages bootstrap pour évaluer la stabilité des clusters
+  sample_size_bootstrap: 20000  # Nombre de cellules à échantillonner pour chaque bootstrap (ex: 10000, 20000, 50000)
+  min_stability_threshold: 0.75 # Seuil minimum de stabilité pour considérer un nombre de clusters comme valide
+  weight_stability: 0.65  # Poids de la stabilité dans le score global de sélection (ex: 0.5, 0.65, 0.8)
+  weight_silhouette: 0.35 # Poids de la silhouette dans le score global de sélection (ex: 0.5, 0.35, 0.2)
+
+transform:
+  method: "logicle"   # arcsinh | logicle | log10 | none
+  cofactor: 5.0
+  apply_to_scatter: false # true = appliquer la transformation aux paramètres de diffusion (FSC/SSC), false = ne pas les transformer
+  # Paramètres logicle avancés (utilisés si method = "logicle")
+  logicle_T: 262144.0  # 2^18 — valeur maximale de l'échelle
+  logicle_M: 4.5       # Décades de l'échelle linéaire
+  logicle_W: 0.5       # Décades de la zone de linéarisation
+  logicle_A: 0.0       # Décades supplémentaires côté négatif
+
+normalize:
+  method: "zscore"    # zscore | minmax | none
+
+markers:
+  exclude_scatter: true # true = exclure les paramètres de diffusion (FSC/SSC) des marqueurs
+  exclude_additional: ["TIME", "EVENT", "WIDTH", "HEIGHT"] # Liste de marqueurs supplémentaires à exclure (ex: ["Time", "Event_length"])
+  keep_area_only: true    # Supprime les doublons -H (Height) ; garde -A (Area) + FSC/SSC/Time
+  # Patterns toujours exclus du clustering FlowSOM (insensible à la casse)
+  scatter_patterns: ["FSC", "SSC", "TIME", "EVENT", "WIDTH", "HEIGHT"]
+
+downsampling:
+  enabled: false # true = activer le downsampling pour limiter le nombre de cellules analysées (utile pour les très grands fichiers)
+  max_cells_per_file: 50000 # Nombre maximum de cellules à conserver par fichier après downsampling (ex: 20000, 50000, 100000)
+  max_cells_total: 1000000  # Nombre maximum de cellules à conserver au total après downsampling (ex: 500000, 1000000, 2000000)
+
+# ── Sous-échantillonnage t-SNE / viSNE ────────────────────────────────────────
+# t-SNE est O(n²) en mémoire et en temps — un sous-échantillonnage est
+# TOUJOURS appliqué avant le calcul, quelle que soit la taille du fichier.
+#
+# Avec openTSNE (recommandé) : max_events=0 désactive la limite (openTSNE
+#   passe à l'échelle sur des millions de cellules grâce à FFT approché).
+# Sans openTSNE (fallback sklearn) : max_events ne peut pas dépasser ~50 000
+#   sans risque de freeze (O(n²) strict). La valeur ci-dessous est appliquée
+#   même si max_events=0 dans ce cas.
+#
+# Les cellules exclues du calcul t-SNE reçoivent NaN dans les colonnes
+# visne_1 / visne_2 du CSV de sortie — elles restent dans tous les autres
+# calculs (QC, clustering, export FCS).
+visne:
+  max_events: 50000       # 0 = pas de limite (recommandé avec openTSNE uniquement)
+  sampling_method: "random"  # random | density (density = préserve les populations rares)
+
+# Intégration de données (correction d'effet batch)
+# Désactivée par défaut pour éviter toute correction Harmony non souhaitée.
+data_integration:
+  enabled: false          # false = Harmony désactivé par défaut (recommandé).
+                          # Activer uniquement si vous avez plusieurs acquisitions avec un effet
+                          # batch technique avéré. Ne jamais aligner des marqueurs biologiques
+                          # discriminants (CD34, CD45, CD117) — cela efface le signal MRD.
+  method: "harmony"        # harmony (autres méthodes possibles à terme)
+  harmony_params:
+    # Aligner UNIQUEMENT les canaux purement techniques (scatter).
+    # NE PAS inclure CD45-A ou tout marqueur biologique — risque de faux négatifs MRD.
+    markers_to_align: ["FSC-A", "SSC-A"]
+    sigma: 0.05
+    nclust: 30              # null = auto (plus lent)
+    block_size: 0.20
+    max_iter: 10
+    max_iter_kmeans: 10
+    verbose: false
+
+# Analyse cohorte avancée (Experiment-level)
+# Pilotage des stratégies Harmony/PHATE/PhenoGraph via YAML.
+# Cette section est lue via config._extra['advanced_cohort_analysis'].
+advanced_cohort_analysis:
+  enabled: false
+  # Paramètres partagés (appliqués à chaque stratégie active)
+  channels: []               # [] = intersection automatique des canaux entre samples
+  source_masks: ["qc_pass"] # Masques source pour la concaténation cohorte
+  batch_key: "batch"        # Colonne de cohort_metadata utilisée pour les labels batch
+
+  harmony:
+    enabled: true
+    theta: 2.0
+    lambda_: 1.0
+    sigma: 0.1
+    nclust: null
+    max_iter_harmony: 10
+    max_iter_kmeans: 20
+    random_state: 42
+    store_corrected_channels: true
+    corrected_channel_prefix: "harmony_"
+
+  phate:
+    enabled: false
+    embedding_name: "phate_2d"
+    n_components: 2
+    knn: 10
+    decay: 40
+    t: "auto"
+    gamma: 1.0
+    random_state: 42
+    use_harmony_if_available: true
+
+  phenograph:
+    enabled: false
+    clustering_name: "phenograph"
+    k: 30
+    random_state: 42
+    use_harmony_if_available: true
+    min_rare_size: 30
+
+visualization:
+  save_plots: true       # true = enregistrer les figures générées (heatmaps, UMAP, etc.)
+  umap_enabled: false        # true = calculer UMAP après clustering
+  plot_format: "png"        # png | pdf | svg
+  dpi: 500                 # Résolution des figures enregistrées (ex: 300, 500, 600)
+  # Exports statiques Plotly → image (kaleido/Chromium) — désactiver pour accélérer (~40s/patient)
+  export_jpg_barcharts: false  # true = exporter les bar charts (patho%, cellules%) en JPG via kaleido
+  export_png_mrd: true        # true = exporter le résumé MRD en PNG via kaleido
+  # Rapport PDF — désactiver pour accélérer (~60s/patient)
+  export_pdf: false             # true = générer le rapport PDF (nécessite reportlab + kaleido)
+  pdf_scale: 1.0               # Facteur d'échelle pour les figures Plotly dans le PDF (ex: 1.0, 1.5)
+  pdf_dpi_mpl: 100             # Résolution DPI pour les figures Matplotlib dans le PDF (ex: 100, 150)
+  # Grille SOM statique
+  som_grid_max_display_cells: 100000  # Nb max de cellules affichées dans la grille SOM (downsampling, ex: 50000, 100000)
+  som_grid_dpi: 100                   # DPI de la grille SOM statique (ex: 100, 150)
+  # Thème sombre (identique aux constantes PLOT_*)
+  dark_bg: "#1e1e2e"
+  accent_color: "#6366f1"
+  grid_color: "#45475a"
+  text_color: "#e2e8f0"
+  # Couleurs conditions
+  color_kept: "#a6e3a1"       # Vert pastel — cellules conservées / Sain
+  color_excluded: "#f38ba8"   # Rouge pastel — cellules exclues / Pathologique
+  # Couleurs populations de référence
+  colors_populations:
+    Granulocytes: "#4cc9f0"
+    Monocytes: "#f72585"
+    B_cells: "#7209b7"
+    T_NK_cells: "#3a0ca3"
+    Plasmocytes: "#f4a261"
+    Hemato_I: "#2dc653"
+    Blasts_CD34: "#ef233c"
+    Unknown: "#6c757d"
+
+  # Paramètres par figure exportée
+  figures:
+    heatmap:
+      figsize: [16, 8]
+      cmap: "magma"
+    metacluster_dist:
+      figsize: [14, 6]
+    umap:
+      n_sample: 10000     # Nombre de cellules à échantillonner pour l'UMAP (ex: 5000, 10000, 20000)
+      point_size: 3     # Taille des points dans l'UMAP (ex: 1, 3, 5)
+      alpha: 0.5     # Transparence des points dans l'UMAP (ex: 0.3, 0.5, 0.7)
+    gating:
+      n_sample: 60000   # Nombre de cellules à afficher dans les graphiques de gating (ex: 20000, 60000, 100000)
+    sankey:
+      height: 450       # Hauteur du diagramme de Sankey dans le rapport HTML (en pixels, ex: 300, 450, 600)
+      paper_bgcolor: "#fafafa"
+    html_report:
+      self_contained: true
+
+gpu:
+  enabled: true        # true = activer GPUFlowSOMEstimator si CUDA disponible, false = forcer l'utilisation du CPU (même si GPU disponible)
+
+logging:
+  level: "INFO"      # Niveau de logging: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+export_cluster_distribution:
+  enabled: true
+  # Niveau de détail à exporter
+  level: "both"               # "node" (noeuds SOM) | "metacluster" | "both"
+  # Colonne de tri (décroissant = patho le plus représenté en premier)
+  sort_by: "pct_patho_in_cluster"
+  ascending: false
+  # Formats de sortie
+  txt_enabled: true           # Rapport texte ASCII lisible
+  csv_enabled: true           # CSV prêt Excel / R
+  # Nombre de décimales
+  txt_decimal_places: 1       # Précision dans le rapport texte (ex: 92.7%)
+  csv_decimal_places: 3       # Précision dans le CSV (ex: 92.747%)
+  # Labels de condition reconnus (insensible à la casse)
+  sain_labels: ["Sain", "Normal", "NBM", "Healthy", "Moelle normale"]
+  patho_labels: ["Pathologique", "Patho", "AML", "Disease"]
+
+population_mapping:
+  enabled: false
+  ref_mfi_dir: ""  # Dossier contenant les MFI de référence — à définir
+  cache_dir: "output/ref_mfi_parquet_cache"
+  distance_percentile: 60 # Percentile de distance pour le mapping (ex: 50, 60, 75)
+  include_scatter: true # true = inclure les paramètres de diffusion (FSC/SSC) dans le calcul de distance pour le mapping, false = ne pas les inclure
+  normalization_method: "range" # range (min-max) | zscore | none
+  mapping_method: "cosine_prior"   # M12 recommandé ELN 2022
+  unknown_threshold_mode: "auto_otsu" # auto_otsu (seuil automatique basé sur Otsu) | fixed (seuil fixe) | none (pas de seuil, tout est mappé à la population la plus proche)
+  hard_limit_factor: 5.0 # Facteur multiplicateur pour le seuil fixe (ex: 2.0, 5.0, 10.0) — utilisé si unknown_threshold_mode = fixed
+  prior_mode: "log10_cubed" # "log10_cubed" (log10(1 + distance^3)) pour accentuer les différences de distance, "linear" (distance brute) pour un mapping plus direct
+  transform_method: "arcsinh"   # "arcsinh" (cofacteur défini ci-dessous) ou "log10" (log10(1 + distance)) pour réduire l'impact des grandes distances
+  arcsinh_cofactor: 5.0 
+  apply_to_scatter: false # true = appliquer la transformation aux paramètres de diffusion (FSC/SSC) dans le calcul de distance, false = ne pas les transformer
+  knn_sample_size: 2000 # Nombre de cellules à échantillonner pour le calcul des distances KNN (ex: 1000, 2000, 5000) — utilisé pour accélérer le mapping sur de grands datasets
+  knn_k: 15 # Nombre de voisins à considérer pour le mapping KNN (ex: 5, 10, 15) — utilisé pour un mapping plus robuste basé sur les populations voisines
+  cov_reg_alpha: 0.0001 # Paramètre de régularisation pour la matrice de covariance dans le calcul de distance de Mahalanobis (ex: 0.0001, 0.001, 0.01) — utilisé pour éviter les problèmes de covariance singulière sur de petits échantillons
+  total_knn_points: 15000   # Nombre total de points à utiliser pour le calcul des distances KNN (ex: 10000, 15000, 30000) — utilisé pour limiter la mémoire utilisée lors du mapping sur de grands datasets
+  blast_enabled: true      # true = activer le mapping spécifique des blastes basé sur les seuils ELN (CD34+ et CD45-) pour identifier les cellules blastiques même si elles ne correspondent pas parfaitement aux populations de référence, false = désactiver ce mapping spécifique et se fier uniquement au mapping global basé sur la distance
+  blast_suspect_categories: ["BLAST_HIGH", "BLAST_MODERATE"] # Catégories de mapping à considérer comme suspectes pour les blastes (ex: "BLAST_HIGH", "BLAST_MODERATE") — utilisé pour identifier les cellules qui pourraient être des blastes même si elles ne sont pas mappées dans la catégorie BLAST_STRICT, en se basant sur leur proximité avec les populations de référence et leurs caractéristiques CD34+/CD45-
+  viz_interactive: true # true = activer les visualisations interactives Plotly pour le mapping des populations (ex: scatter 2D, distribution des distances, etc.) dans le rapport HTML, false = visualisations statiques uniquement
+  viz_max_points: 50000 # Nombre maximum de points à afficher dans les visualisations interactives du mapping (ex: 20000, 50000, 100000) — utilisé pour limiter la mémoire utilisée par les graphiques interactifs sur de grands datasets
+
+
+performance_monitoring:
+  enabled: true              # true = activer le monitoring CPU/RAM/Disque/Réseau/GPU pendant la pipeline
+  interval_seconds: 1.0       # intervalle de collecte (secondes) — 0.5 pour plus de précision, 2.0 pour moins de charge
+  include_gpu: true           # true = collecter les métriques GPU NVIDIA (nécessite : pip install gputil)
+
+patho_fcs_export:
+  enabled: true             # true = générer un FCS restreint à la moelle pathologique avec colonne Is_MRD
+  mrd_method: "jf"          # méthode utilisée pour Is_MRD : "flo" (méthode Flo) ou "jf" (méthode JF)
+
+batch:
+  enabled: false            # true = traiter chaque FCS du dossier patho individuellement (mode lot)
+
+export_mode:
+  # "standard" : tous les fichiers de sortie (FCS complet, CSV, JSON métadonnées, plots individuels, rapports, MRD)
+  # "compact"  : sorties essentielles uniquement — rapport PDF, rapport HTML,
+  #              MRD JSON (mrd_results_*.json) et FCS pathologique avec colonne Is_MRD.
+  #              Les CSV, FCS complet, distributions TXT/CSV et JSON de métadonnées sont ignorés.
+  #              Les figures sont toujours générées car nécessaires à l'assemblage des rapports.
+  mode: "standard"
+  # Export CSV global — désactiver pour ne produire aucun fichier CSV (complet, stats, MFI, per_file)
+  export_csv: false           # true = exporter tous les CSV dans le dossier csv, false = aucun CSV
+  # Export CSV par fichier FCS source (dossier csv/per_file) — activé/désactivé indépendamment du mode
+  export_per_file_csv: false  # true = exporter un CSV séparé par fichier FCS source, false = ignorer
+
+# ── Déséquilibre Maîtrisé (Stratified Downsampling) ─────────────────────────
+# Résout l'invisibilité des clusters rares (blastes LAIP < 1%) en imposant
+# un rapport sain/patho contrôlé AVANT le SOM.
+#
+# Problème sans ce paramètre :
+#   14,5M cellules saines + 100k blastes → FlowSOM ignore les blastes
+#   car la densité est dominée par les cellules normales.
+#
+# Avec balance_conditions: true et imbalance_ratio: 2.0 :
+#   → 200k cellules saines tirées équitablement entre les fichiers NBM
+#   → 100k blastes (tous conservés)
+#   → Pool final 300k cellules, blastes visibles à ~33%
+stratified_downsampling:
+  balance_conditions: true   # true = activer le rééquilibrage, false = comportement original
+  imbalance_ratio: 3.0        # Rapport cible n_sain / n_patho (1.0 = 50/50, 2.0 = 2 sains/1 patho, 0.5 = 1 sain/2 pathos)
+  seed: 42                    # Graine pour reproductibilité du tirage aléatoire
+  nbm_ids: []                 # Liste des noms de fichiers NBM (FlowSample.name).
+                              # Si vide, auto-détection depuis les échantillons "Healthy".
+                              # Exemple :
+                              #   nbm_ids:
+                              #     - "NBM_Patient01_230115.fcs"
+                              #     - "NBM_Patient02_230115.fcs"
