@@ -162,8 +162,9 @@ class InteractiveGatingCanvas(pg.PlotWidget):
     rectangleGateCompleted = pyqtSignal(str, str, str, float, float, float, float)
     quadrantGateCompleted = pyqtSignal(str, str, str, float, float)
     # Émis quand l'utilisateur déplace une gate existante par drag & drop
-    # (gate_id, x_channel, y_channel, new_vertices_or_bounds)
     gateModified = pyqtSignal(str, str, str, list)
+    # Émis quand le centre du quadrant est déplacé (gate_name, x_ch, y_ch, new_x, new_y)
+    quadrantMoved = pyqtSignal(str, str, str, float, float)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent=parent)
@@ -194,10 +195,13 @@ class InteractiveGatingCanvas(pg.PlotWidget):
 
         # état dessin rectangle 2D
         self._rect_start: Optional[Tuple[float, float]] = None
-        self._rect_preview: Optional[pg.LinearRegionItem] = None
+        self._rect_preview: Optional[pg.PlotDataItem] = None  # contour preview dynamique
+        self._rect_roi: Optional[pg.RectROI] = None           # ROI final draggable
 
-        # état dessin quadrant (lignes croisées)
+        # état dessin quadrant (lignes croisées + centre draggable)
         self._quad_lines: List[pg.InfiniteLine] = []
+        # {gate_name: (line_v, line_h)} pour les quadrants finalisés draggables
+        self._quad_overlays: Dict[str, Tuple[pg.InfiniteLine, pg.InfiniteLine]] = {}
 
         # état gate 1D (LinearRegionItem — histogramme uniquement)
         self._region_1d: Optional[pg.LinearRegionItem] = None
@@ -923,7 +927,7 @@ class InteractiveGatingCanvas(pg.PlotWidget):
                 pass
 
     def clear_gate_overlays(self) -> None:
-        """Retire tous les overlays de gates."""
+        """Retire tous les overlays de gates (polygones, rectangles, quadrants)."""
         for item in list(self._gate_overlays.values()):
             try:
                 self.removeItem(item)
@@ -934,9 +938,109 @@ class InteractiveGatingCanvas(pg.PlotWidget):
                 self.removeItem(label_item)
             except Exception:
                 pass
+        # Quadrant overlays (deux InfiniteLine par quadrant)
+        for lv, lh in list(self._quad_overlays.values()):
+            try:
+                self.removeItem(lv)
+                self.removeItem(lh)
+            except Exception:
+                pass
         self._gate_overlays.clear()
         self._gate_rois.clear()
         self._gate_labels.clear()
+        self._quad_overlays.clear()
+
+    def set_data_contour(
+        self,
+        df: pd.DataFrame,
+        x_channel: str,
+        y_channel: str,
+        n_levels: int = 8,
+        bins: int = 128,
+    ) -> None:
+        """
+        Affiche un contour plot de densité style Kaluza (iso-courbes de densité).
+
+        Utilise numpy.histogram2d + scipy.ndimage pour les contours.
+        Fallback vers set_data_density si scipy absent.
+
+        Args:
+            df:        DataFrame compensé+transformé.
+            x_channel: Canal X (Pnn).
+            y_channel: Canal Y (Pnn).
+            n_levels:  Nombre de courbes de niveau.
+            bins:      Résolution de la grille de densité.
+        """
+        if x_channel not in df.columns or y_channel not in df.columns:
+            _logger.error("set_data_contour: canaux absents x='%s' y='%s'", x_channel, y_channel)
+            return
+
+        self._x_channel = x_channel
+        self._y_channel = y_channel
+        self.clear_data()
+
+        xd = df[x_channel].to_numpy(dtype=np.float32).ravel()
+        yd = df[y_channel].to_numpy(dtype=np.float32).ravel()
+        valid = np.isfinite(xd) & np.isfinite(yd)
+        xd, yd = xd[valid], yd[valid]
+
+        if len(xd) == 0:
+            return
+
+        h, xe, ye = np.histogram2d(xd, yd, bins=bins)
+
+        try:
+            from scipy.ndimage import gaussian_filter
+            h_smooth = gaussian_filter(h.astype(np.float32), sigma=1.5)
+        except ImportError:
+            h_smooth = h.astype(np.float32)
+
+        # Normalisation log1p pour iso-niveaux perceptuels
+        h_log = np.log1p(h_smooth)
+        h_max = float(h_log.max()) or 1.0
+        h_norm = h_log / h_max  # [0, 1]
+
+        levels = np.linspace(0.05, 1.0, n_levels + 1)[:-1]  # exclut 0 (fond)
+
+        # Palette viridis-like : bleu→cyan→vert→jaune→rouge (n_levels couleurs)
+        cmap_t = np.linspace(0, 1, n_levels)
+        r_vals = np.clip((cmap_t * 2 - 0.5) * 255, 0, 255).astype(np.uint8)
+        g_vals = np.clip((1.0 - np.abs(cmap_t - 0.5) * 2) * 255, 0, 255).astype(np.uint8)
+        b_vals = np.clip((1.0 - cmap_t * 2) * 255, 0, 255).astype(np.uint8)
+
+        x_centers = 0.5 * (xe[:-1] + xe[1:])
+        y_centers = 0.5 * (ye[:-1] + ye[1:])
+
+        for i, level in enumerate(levels):
+            try:
+                from matplotlib.contour import QuadContourSet
+                import matplotlib.pyplot as _plt
+                # Utilise matplotlib pour extraire les contours, affiche via PyQtGraph
+                fig, ax = _plt.subplots()
+                cs = ax.contour(x_centers, y_centers, h_norm.T, levels=[level])
+                _plt.close(fig)
+
+                color = (int(r_vals[i]), int(g_vals[i]), int(b_vals[i]), 180)
+                pen = pg.mkPen(color=color, width=1.0)
+
+                for path in cs.collections[0].get_paths():
+                    verts = path.vertices
+                    if len(verts) < 3:
+                        continue
+                    item = pg.PlotDataItem(
+                        x=verts[:, 0].astype(np.float32),
+                        y=verts[:, 1].astype(np.float32),
+                        pen=pen,
+                    )
+                    self.addItem(item)
+                    self._backgate_items.append(item)
+            except Exception as exc:
+                _logger.debug("Contour level %.2f ignoré : %s", level, exc)
+
+        self.getPlotItem().setLabel("bottom", self._x_label or x_channel)
+        self.getPlotItem().setLabel("left", self._y_label or y_channel)
+        self.autoRange()
+        _logger.debug("set_data_contour: %d pts, %d niveaux", len(xd), n_levels)
 
     def reload_gate_overlays_from_engine(
         self,
@@ -965,8 +1069,8 @@ class InteractiveGatingCanvas(pg.PlotWidget):
                     verts = [(v[0], v[1]) for v in gate_obj.vertices]
                     if len(verts) >= 2:
                         self.add_gate_overlay(gid, verts, label=gid)
+
                 elif "Rectangle" in gate_type:
-                    # Reconstruire les 4 coins depuis les dimensions
                     dims = gate_obj.dimensions
                     if len(dims) >= 2:
                         x_min = dims[0].min or float("-inf")
@@ -975,6 +1079,24 @@ class InteractiveGatingCanvas(pg.PlotWidget):
                         y_max = dims[1].max or float("inf")
                         verts = [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
                         self.add_gate_overlay(gid, verts, label=gid)
+
+                elif "Quadrant" in gate_type:
+                    # Reconstruire x_threshold / y_threshold depuis les QuadrantDividers
+                    dividers = getattr(gate_obj, "dividers", [])
+                    x_thr, y_thr = None, None
+                    for div in dividers:
+                        vals = getattr(div, "values", [])
+                        ch = getattr(div, "dimension_ref", "")
+                        if not vals:
+                            continue
+                        # Premier divider = X, second = Y (convention add_quadrant_gate)
+                        if x_thr is None:
+                            x_thr = float(vals[0])
+                        else:
+                            y_thr = float(vals[0])
+                    if x_thr is not None and y_thr is not None:
+                        self.add_quadrant_overlay(gid, x_thr, y_thr)
+
             except Exception as exc:
                 _logger.debug("Overlay ignoré pour %s : %s", gid, exc)
 
@@ -1049,10 +1171,14 @@ class InteractiveGatingCanvas(pg.PlotWidget):
 
     def _on_scene_move(self, pos) -> None:
         """Mise à jour du preview lors du déplacement souris."""
+        vb = self.getViewBox()
+        data_pos = vb.mapSceneToView(pos)
+        cx, cy = float(data_pos.x()), float(data_pos.y())
+
         if self._mode == DrawMode.POLYGON and self._poly_vertices:
-            vb = self.getViewBox()
-            data_pos = vb.mapSceneToView(pos)
-            self._update_polygon_preview(float(data_pos.x()), float(data_pos.y()))
+            self._update_polygon_preview(cx, cy)
+        elif self._mode == DrawMode.RECTANGLE and self._rect_start is not None:
+            self._update_rect_preview(cx, cy)
 
     # ------------------------------------------------------------------
     # Mode Polygon
@@ -1108,37 +1234,86 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             return
 
         if self._rect_start is None:
+            # 1er clic : mémorise le premier coin, affiche preview
             self._rect_start = (x, y)
             _logger.debug("Rectangle : premier coin enregistré (%.3f, %.3f)", x, y)
         else:
+            # 2e clic : finalise le rectangle, crée une RectROI draggable
             x0, y0 = self._rect_start
-            x_min, x_max = (min(x0, x), max(x0, x))
-            y_min, y_max = (min(y0, y), max(y0, y))
+            x_min, x_max = min(x0, x), max(x0, x)
+            y_min, y_max = min(y0, y), max(y0, y)
             self._rect_start = None
             self._cleanup_rect_preview()
+
+            # RectROI draggable — feedback visuel + déplacement post-création
+            pen = pg.mkPen(color=_GATE_OVERLAY_COLOR, width=1.5)
+            roi = pg.RectROI(
+                pos=(x_min, y_min),
+                size=(x_max - x_min, y_max - y_min),
+                pen=pen,
+                movable=True,
+                resizable=True,
+            )
+            fill = pg.mkColor(_GATE_OVERLAY_COLOR)
+            fill.setAlpha(25)
+            if hasattr(roi, "setBrush"):
+                roi.setBrush(pg.mkBrush(fill))
+            self.addItem(roi)
+            self._rect_roi = roi
+
+            gate_name = self._next_gate_name
+            x_ch = self._x_channel
+            y_ch = self._y_channel
+
+            # Handler de déplacement — re-émet les bounds mis à jour
+            def _on_rect_changed(r, gate_name=gate_name, x_ch=x_ch, y_ch=y_ch):
+                try:
+                    rpos = r.pos()
+                    rsize = r.size()
+                    rx_min = float(rpos.x())
+                    ry_min = float(rpos.y())
+                    rx_max = rx_min + float(rsize.x())
+                    ry_max = ry_min + float(rsize.y())
+                    verts = [
+                        (rx_min, ry_min), (rx_max, ry_min),
+                        (rx_max, ry_max), (rx_min, ry_max),
+                    ]
+                    self.gateModified.emit(gate_name, x_ch, y_ch, verts)
+                except Exception:
+                    pass
+
+            if hasattr(roi, "sigRegionChangeFinished"):
+                roi.sigRegionChangeFinished.connect(_on_rect_changed)
+
             self.set_draw_mode(DrawMode.NAVIGATE)
             _logger.info(
                 "RectangleGate émise : %s x=[%.3f,%.3f] y=[%.3f,%.3f]",
-                self._next_gate_name,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
+                gate_name, x_min, x_max, y_min, y_max,
             )
-            self.rectangleGateCompleted.emit(
-                self._next_gate_name,
-                self._x_channel,
-                self._y_channel,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-            )
+            self.rectangleGateCompleted.emit(gate_name, x_ch, y_ch, x_min, x_max, y_min, y_max)
+
+    def _update_rect_preview(self, cursor_x: float, cursor_y: float) -> None:
+        """Affiche un contour rectangulaire dynamique entre le premier coin et le curseur."""
+        if self._rect_start is None:
+            return
+        x0, y0 = self._rect_start
+        xs = [x0, cursor_x, cursor_x, x0, x0]
+        ys = [y0, y0, cursor_y, cursor_y, y0]
+
+        if self._rect_preview is not None:
+            self.removeItem(self._rect_preview)
+
+        pen = pg.mkPen(color=_GATE_DRAWING_COLOR, width=1.2, style=Qt.DashLine)
+        self._rect_preview = pg.PlotDataItem(x=xs, y=ys, pen=pen)
+        self.addItem(self._rect_preview)
 
     def _cleanup_rect_preview(self) -> None:
         if self._rect_preview is not None:
             self.removeItem(self._rect_preview)
             self._rect_preview = None
+        if self._rect_roi is not None:
+            self.removeItem(self._rect_roi)
+            self._rect_roi = None
 
     # ------------------------------------------------------------------
     # Mode Quadrant
@@ -1152,25 +1327,172 @@ class InteractiveGatingCanvas(pg.PlotWidget):
 
         self._cleanup_quad_lines()
 
-        # Affichage des deux lignes croisées
-        pen_x = pg.mkPen(color=_GATE_DRAWING_COLOR, width=1.2, style=Qt.DashLine)
-        pen_y = pg.mkPen(color=_GATE_DRAWING_COLOR, width=1.2, style=Qt.DashLine)
-        line_x = pg.InfiniteLine(pos=x, angle=90, pen=pen_x)
-        line_y = pg.InfiniteLine(pos=y, angle=0, pen=pen_y)
-        self.addItem(line_x)
-        self.addItem(line_y)
-        self._quad_lines = [line_x, line_y]
-
-        name = self._next_gate_name
+        gate_name = self._next_gate_name
         x_ch = self._x_channel
         y_ch = self._y_channel
+
+        # Lignes permanentes draggables (movable=True) — style Kaluza
+        pen = pg.mkPen(color=_GATE_OVERLAY_COLOR, width=1.2)
+        line_v = pg.InfiniteLine(pos=x, angle=90, pen=pen, movable=True,
+                                  label=f"{gate_name} X={x:.2f}",
+                                  labelOpts={"color": _GATE_OVERLAY_COLOR, "position": 0.95})
+        line_h = pg.InfiniteLine(pos=y, angle=0, pen=pen, movable=True,
+                                  label=f"{gate_name} Y={y:.2f}",
+                                  labelOpts={"color": _GATE_OVERLAY_COLOR, "position": 0.05})
+        self.addItem(line_v)
+        self.addItem(line_h)
+        self._quad_lines = [line_v, line_h]
+        self._quad_overlays[gate_name] = (line_v, line_h)
+
+        # Ajouter les 4 labels de quadrant (Q1-Q4) sur le canvas
+        self._add_quadrant_labels(gate_name, x, y)
+
+        # Callback de déplacement — met à jour labels + émet quadrantMoved
+        def _on_quad_line_moved(gate_name=gate_name, x_ch=x_ch, y_ch=y_ch):
+            try:
+                lv, lh = self._quad_overlays.get(gate_name, (None, None))
+                if lv is None or lh is None:
+                    return
+                new_x = float(lv.value())
+                new_y = float(lh.value())
+                # Mise à jour labels de position
+                lv.label.setFormat(f"{gate_name} X={new_x:.2f}")
+                lh.label.setFormat(f"{gate_name} Y={new_y:.2f}")
+                # Déplacer les labels Q1-Q4
+                self._update_quadrant_labels(gate_name, new_x, new_y)
+                self.quadrantMoved.emit(gate_name, x_ch, y_ch, new_x, new_y)
+            except Exception as exc:
+                _logger.debug("_on_quad_line_moved: %s", exc)
+
+        if hasattr(line_v, "sigPositionChangeFinished"):
+            line_v.sigPositionChangeFinished.connect(_on_quad_line_moved)
+            line_h.sigPositionChangeFinished.connect(_on_quad_line_moved)
+
         self.set_draw_mode(DrawMode.NAVIGATE)
-        _logger.info("QuadrantGate émise : %s x_thr=%.3f y_thr=%.3f", name, x, y)
-        self.quadrantGateCompleted.emit(name, x_ch, y_ch, x, y)
+        _logger.info("QuadrantGate émise : %s x_thr=%.3f y_thr=%.3f", gate_name, x, y)
+        self.quadrantGateCompleted.emit(gate_name, x_ch, y_ch, x, y)
+
+    def _add_quadrant_labels(self, gate_name: str, x_thr: float, y_thr: float) -> None:
+        """Ajoute les 4 labels Q1/Q2/Q3/Q4 aux coins des quadrants."""
+        vb = self.getViewBox()
+        rect = vb.viewRect()
+        x_min, x_max = rect.left(), rect.right()
+        y_min, y_max = rect.top(), rect.bottom()
+
+        # Positions dans chaque quadrant (75% vers le coin)
+        lx_neg = x_min + (x_thr - x_min) * 0.75
+        lx_pos = x_thr + (x_max - x_thr) * 0.25
+        ly_neg = y_min + (y_thr - y_min) * 0.75
+        ly_pos = y_thr + (y_max - y_thr) * 0.25
+
+        quad_info = [
+            ("Q2", lx_neg, ly_pos),   # Q2: X-, Y+ (haut-gauche)
+            ("Q1", lx_pos, ly_pos),   # Q1: X+, Y+ (haut-droite)
+            ("Q3", lx_neg, ly_neg),   # Q3: X-, Y- (bas-gauche)
+            ("Q4", lx_pos, ly_neg),   # Q4: X+, Y- (bas-droite)
+        ]
+        q_color = pg.mkColor(_GATE_OVERLAY_COLOR)
+        for label_text, lx, ly in quad_info:
+            item_key = f"__quad_{gate_name}_{label_text}"
+            txt = pg.TextItem(label_text, color=q_color, anchor=(0.5, 0.5))
+            txt.setPos(lx, ly)
+            self.addItem(txt)
+            self._gate_labels[item_key] = txt
+
+    def _update_quadrant_labels(self, gate_name: str, x_thr: float, y_thr: float) -> None:
+        """Déplace les labels Q1-Q4 quand le centre du quadrant est bougé."""
+        vb = self.getViewBox()
+        rect = vb.viewRect()
+        x_min, x_max = rect.left(), rect.right()
+        y_min, y_max = rect.top(), rect.bottom()
+
+        lx_neg = x_min + (x_thr - x_min) * 0.75
+        lx_pos = x_thr + (x_max - x_thr) * 0.25
+        ly_neg = y_min + (y_thr - y_min) * 0.75
+        ly_pos = y_thr + (y_max - y_thr) * 0.25
+
+        positions = {
+            "Q2": (lx_neg, ly_pos),
+            "Q1": (lx_pos, ly_pos),
+            "Q3": (lx_neg, ly_neg),
+            "Q4": (lx_pos, ly_neg),
+        }
+        for q_label, (lx, ly) in positions.items():
+            item_key = f"__quad_{gate_name}_{q_label}"
+            txt = self._gate_labels.get(item_key)
+            if txt is not None:
+                txt.setPos(lx, ly)
+
+    def add_quadrant_overlay(
+        self,
+        gate_name: str,
+        x_threshold: float,
+        y_threshold: float,
+        color_hex: str = "#64DC78",
+    ) -> None:
+        """
+        Affiche une QuadrantGate existante comme deux lignes InfiniteLine draggables.
+        Appelé par reload_gate_overlays_from_engine() pour les quadrants déjà dans FlowKit.
+        """
+        # Retire l'ancien overlay si présent
+        if gate_name in self._quad_overlays:
+            old_v, old_h = self._quad_overlays.pop(gate_name)
+            try:
+                self.removeItem(old_v)
+                self.removeItem(old_h)
+            except Exception:
+                pass
+        # Nettoyer les labels Q1-Q4 existants
+        for q in ("Q1", "Q2", "Q3", "Q4"):
+            k = f"__quad_{gate_name}_{q}"
+            old_lbl = self._gate_labels.pop(k, None)
+            if old_lbl is not None:
+                try:
+                    self.removeItem(old_lbl)
+                except Exception:
+                    pass
+
+        pen = pg.mkPen(color=pg.mkColor(color_hex), width=1.2)
+        line_v = pg.InfiniteLine(
+            pos=x_threshold, angle=90, pen=pen, movable=True,
+            label=f"{gate_name} X={x_threshold:.2f}",
+            labelOpts={"color": color_hex, "position": 0.95},
+        )
+        line_h = pg.InfiniteLine(
+            pos=y_threshold, angle=0, pen=pen, movable=True,
+            label=f"{gate_name} Y={y_threshold:.2f}",
+            labelOpts={"color": color_hex, "position": 0.05},
+        )
+        self.addItem(line_v)
+        self.addItem(line_h)
+        self._quad_overlays[gate_name] = (line_v, line_h)
+        self._add_quadrant_labels(gate_name, x_threshold, y_threshold)
+
+        x_ch, y_ch = self._x_channel, self._y_channel
+
+        def _on_moved(gate_name=gate_name, x_ch=x_ch, y_ch=y_ch):
+            try:
+                lv, lh = self._quad_overlays.get(gate_name, (None, None))
+                if lv is None:
+                    return
+                new_x, new_y = float(lv.value()), float(lh.value())
+                lv.label.setFormat(f"{gate_name} X={new_x:.2f}")
+                lh.label.setFormat(f"{gate_name} Y={new_y:.2f}")
+                self._update_quadrant_labels(gate_name, new_x, new_y)
+                self.quadrantMoved.emit(gate_name, x_ch, y_ch, new_x, new_y)
+            except Exception as exc:
+                _logger.debug("add_quadrant_overlay moved: %s", exc)
+
+        if hasattr(line_v, "sigPositionChangeFinished"):
+            line_v.sigPositionChangeFinished.connect(_on_moved)
+            line_h.sigPositionChangeFinished.connect(_on_moved)
 
     def _cleanup_quad_lines(self) -> None:
         for line in self._quad_lines:
-            self.removeItem(line)
+            try:
+                self.removeItem(line)
+            except Exception:
+                pass
         self._quad_lines = []
 
     # ------------------------------------------------------------------

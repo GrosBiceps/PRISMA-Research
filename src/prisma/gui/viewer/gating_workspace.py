@@ -45,6 +45,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QFrame,
     QInputDialog,
+    QSpinBox,
 )
 from PyQt5.QtGui import QFont
 
@@ -281,10 +282,27 @@ class PlotWidgetPanel(QFrame):
         xform_row.addStretch()
         layout.addLayout(xform_row)
 
-        # Checkbox density locale au panel
+        # Contrôles de rendu : Densité + Contour (mutuellement exclusifs)
+        render_row = QHBoxLayout()
         self._chk_density_panel = QCheckBox("Densité")
         self._chk_density_panel.setStyleSheet("color: #8899AA; font-size: 9px;")
-        layout.addWidget(self._chk_density_panel)
+        render_row.addWidget(self._chk_density_panel)
+
+        self._chk_contour_panel = QCheckBox("Contour")
+        self._chk_contour_panel.setStyleSheet("color: #39FF8A; font-size: 9px;")
+        self._chk_contour_panel.setToolTip("Affiche les iso-courbes de densité (style Kaluza)")
+        render_row.addWidget(self._chk_contour_panel)
+
+        self._spin_contour_levels = QSpinBox()
+        self._spin_contour_levels.setRange(3, 15)
+        self._spin_contour_levels.setValue(8)
+        self._spin_contour_levels.setPrefix("N=")
+        self._spin_contour_levels.setFixedWidth(58)
+        self._spin_contour_levels.setStyleSheet("font-size: 9px;")
+        self._spin_contour_levels.setVisible(False)
+        render_row.addWidget(self._spin_contour_levels)
+        render_row.addStretch()
+        layout.addLayout(render_row)
 
         # Canvas
         self._canvas = InteractiveGatingCanvas(self)
@@ -303,11 +321,37 @@ class PlotWidgetPanel(QFrame):
         self._combo_y.currentIndexChanged.connect(self._on_axes_changed)
         self._combo_transform.currentTextChanged.connect(self._on_transform_changed)
         self._chk_density_panel.toggled.connect(self._on_density_toggled)
+        self._chk_contour_panel.toggled.connect(self._on_contour_toggled)
+        self._spin_contour_levels.valueChanged.connect(self._on_contour_levels_changed)
 
     def _on_density_toggled(self, checked: bool) -> None:
+        if checked:
+            # Mutuellement exclusif avec contour
+            self._chk_contour_panel.blockSignals(True)
+            self._chk_contour_panel.setChecked(False)
+            self._chk_contour_panel.blockSignals(False)
+            self._model.contour_mode = False
+            self._spin_contour_levels.setVisible(False)
         self._model.density_coloring = checked
         self._density_cache.invalidate()
         self._refresh()
+
+    def _on_contour_toggled(self, checked: bool) -> None:
+        if checked:
+            # Mutuellement exclusif avec densité KDE
+            self._chk_density_panel.blockSignals(True)
+            self._chk_density_panel.setChecked(False)
+            self._chk_density_panel.blockSignals(False)
+            self._model.density_coloring = False
+        self._model.contour_mode = checked
+        self._spin_contour_levels.setVisible(checked)
+        self._density_cache.invalidate()
+        self._refresh()
+
+    def _on_contour_levels_changed(self, value: int) -> None:
+        self._model.contour_levels = value
+        if self._model.contour_mode:
+            self._refresh()
 
     # ------ Gestion axes et transformation --------------------------------
 
@@ -453,10 +497,22 @@ class PlotWidgetPanel(QFrame):
         y_ch: str,
         mode: RenderMode,
     ) -> None:
-        """Rendu 2D avec stratégie hybride scatter/density."""
+        """Rendu 2D avec stratégie hybride scatter/density/contour."""
         n = len(df)
         sid = self._engine.active_sample_id or ""
         use_density_color = self._model.density_coloring
+
+        if mode == RenderMode.CONTOUR:
+            if hasattr(self._canvas, "set_data_contour"):
+                self._canvas.set_data_contour(
+                    df, x_ch, y_ch,
+                    n_levels=self._model.contour_levels,
+                    bins=self._model.contour_bins,
+                )
+            else:
+                # Fallback si set_data_contour absent (version ancienne du canvas)
+                self._canvas.set_data_2d(df, x_ch, y_ch, density_coloring=True)
+            return
 
         if mode == RenderMode.SCATTER:
             # Cas normal ET cas bouton densité coché (force_density_coloring → SCATTER)
@@ -1289,6 +1345,7 @@ class PrismaGatingWorkspace(QWidget):
                 initial_panel.canvas.polygonGateCompleted.connect(self._on_polygon_gate)
                 initial_panel.canvas.rectangleGateCompleted.connect(self._on_rectangle_gate)
                 initial_panel.canvas.quadrantGateCompleted.connect(self._on_quadrant_gate)
+                initial_panel.canvas.quadrantMoved.connect(self._on_quadrant_moved)
                 initial_panel.canvas.gateModified.connect(self._on_gate_modified)
                 self._worksheet.add_panel(initial_panel)
 
@@ -1371,10 +1428,31 @@ class PrismaGatingWorkspace(QWidget):
             return self.get_available_populations()
 
         if suffix in {".gml", ".xml"}:
-            if not fallback_fcs_folder:
-                raise PrismaEngineError("Un dossier FCS actif est requis pour charger un GatingML.")
-            self.set_input_source_fcs(fallback_fcs_folder)  # appelle déjà set_engine sur contrôleurs
-            self._engine.load_gml(path)
+            # Si un FCS est déjà chargé dans l'engine actif, on peut charger directement
+            # le GML sans passer par set_input_source_fcs.
+            active_sid = None
+            try:
+                active_sid = self._engine.active_sample_id
+            except Exception:
+                pass
+
+            if active_sid:
+                # FCS déjà présent — charger la stratégie directement
+                self._engine.load_gml(path)
+            elif fallback_fcs_folder:
+                self.set_input_source_fcs(fallback_fcs_folder)
+                self._engine.load_gml(path)
+            elif self._loaded_fcs_paths:
+                # Recharger depuis les chemins mémorisés
+                self._engine.load_fcs_batch(
+                    [Path(p) for p in self._loaded_fcs_paths], make_first_active=True
+                )
+                self._engine.load_gml(path)
+            else:
+                raise PrismaEngineError(
+                    "Aucun FCS chargé. Ouvrez d'abord un fichier FCS, "
+                    "puis importez le GatingML."
+                )
             self._last_saved_workspace_path = str(path.resolve())
             self.reload_from_engine()
             return self.get_available_populations()
@@ -1505,6 +1583,7 @@ class PrismaGatingWorkspace(QWidget):
                 panel.canvas.polygonGateCompleted.connect(self._on_polygon_gate)
                 panel.canvas.rectangleGateCompleted.connect(self._on_rectangle_gate)
                 panel.canvas.quadrantGateCompleted.connect(self._on_quadrant_gate)
+                panel.canvas.quadrantMoved.connect(self._on_quadrant_moved)
                 panel.canvas.gateModified.connect(self._on_gate_modified)
 
                 # Synchroniser les axes du panel
@@ -2063,6 +2142,38 @@ class PrismaGatingWorkspace(QWidget):
         finally:
             self._reset_draw_buttons()
 
+    def _on_quadrant_moved(
+        self,
+        gate_name: str,
+        x_channel: str,
+        y_channel: str,
+        new_x_threshold: float,
+        new_y_threshold: float,
+    ) -> None:
+        """
+        Slot : l'utilisateur a déplacé le centre d'un quadrant existant.
+        Recrée la QuadrantGate FlowKit avec les nouveaux seuils.
+        """
+        if not gate_name:
+            return
+        try:
+            paths = self._engine.find_gate_paths(gate_name)
+            gate_path = paths[0] if paths else self._resolve_parent_path()
+            xform_ref = self._selected_transform()
+            # Recréer la QuadrantGate avec les nouveaux seuils
+            self._engine.create_quadrant_gate_from_thresholds(
+                gate_name,
+                gate_path,
+                x_channel,
+                y_channel,
+                new_x_threshold,
+                new_y_threshold,
+                transform_ref=xform_ref,
+            )
+            self._post_gate_created(new_gate_name=gate_name)
+        except Exception as exc:
+            _logger.warning("_on_quadrant_moved '%s': %s", gate_name, exc)
+
     def _on_gate_modified(
         self,
         gate_id: str,
@@ -2142,6 +2253,7 @@ class PrismaGatingWorkspace(QWidget):
         panel.canvas.polygonGateCompleted.connect(self._on_polygon_gate)
         panel.canvas.rectangleGateCompleted.connect(self._on_rectangle_gate)
         panel.canvas.quadrantGateCompleted.connect(self._on_quadrant_gate)
+        panel.canvas.quadrantMoved.connect(self._on_quadrant_moved)
         panel.canvas.gateModified.connect(self._on_gate_modified)
         self._worksheet.add_panel(panel)
         self._worksheet.set_active_panel(panel)
@@ -2286,14 +2398,39 @@ class PrismaGatingWorkspace(QWidget):
     def _on_export_fcs(self) -> None:
         from PyQt5.QtWidgets import QFileDialog
 
-        if self._tree_view is None:
-            self._show_error("Arbre de gating non initialisé.")
-            return
-        index = self._tree_view.currentIndex()
-        node: Optional[GateNode] = index.data(Qt.UserRole)
-        if node is None:
-            self._show_error("Sélectionnez une gate dans l'arbre pour l'export FCS.")
-            return
+        # Résolution de la gate à exporter : arbre en priorité, puis population active
+        gate_id: Optional[str] = None
+        gate_path_resolved: Optional[tuple] = None
+
+        if self._tree_view is not None:
+            index = self._tree_view.currentIndex()
+            node: Optional[GateNode] = index.data(Qt.UserRole)
+            if node is not None:
+                gate_id = node.gate_id
+
+        if gate_id is None:
+            # Fallback : population active dans le combo/canvas
+            if (
+                self._current_gate_node
+                and self._current_gate_node[0].lower() != "root"
+            ):
+                gate_id = self._current_gate_node[0]
+            else:
+                self._show_error(
+                    "Aucune gate sélectionnée.\n"
+                    "Cliquez sur une gate dans l'arbre de population ou choisissez "
+                    "une population active avant d'exporter."
+                )
+                return
+
+        paths = self._engine.find_gate_paths(gate_id)
+        gate_path_resolved = paths[0] if paths else None
+
+        # Créer un objet node minimal pour compatibilité avec le reste du code
+        class _FakeNode:
+            def __init__(self, gid):
+                self.gate_id = gid
+        node = _FakeNode(gate_id)  # type: ignore[assignment]
 
         path, _ = QFileDialog.getSaveFileName(
             self, "Exporter gate → FCS", f"{node.gate_id}.fcs", "FCS (*.fcs)"
@@ -2302,15 +2439,12 @@ class PrismaGatingWorkspace(QWidget):
             return
 
         try:
-            paths = self._engine.find_gate_paths(node.gate_id)
-            gate_path = paths[0] if paths else None
             from src.prisma.exports.gating_exporter import GatingExporter
-
             GatingExporter.export_gated_fcs(
                 self._engine,
                 sample_id=self._current_sample_id(),
                 gate_name=node.gate_id,
-                gate_path=gate_path,
+                gate_path=gate_path_resolved,
                 output_fcs_path=path,
             )
             QMessageBox.information(self, "Export", f"FCS exporté :\n{path}")

@@ -16,10 +16,11 @@ import numpy as np
 
 
 class RenderMode(Enum):
-    SCATTER = auto()       # scatter classique < 10k events
-    DENSITY = auto()       # histogram2d / pseudo-color ≥ 100k events
+    SCATTER = auto()       # scatter classique < 80k events
+    DENSITY = auto()       # histogram2d / pseudo-color ≥ 500k events
     HYBRID = auto()        # scatter sous-échantillonné + density fond
     BACKGATE = auto()      # parent gris + sous-populations colorées
+    CONTOUR = auto()       # iso-courbes de densité (style Kaluza contour plot)
 
 
 @dataclass
@@ -50,20 +51,32 @@ class PlotPanelModel:
     render_mode: RenderMode = RenderMode.SCATTER
     panel_id: str = ""
     density_coloring: bool = False  # coloration KDE scatter (mode SCATTER uniquement)
+    contour_mode: bool = False      # mode contour plot activé manuellement
+    contour_levels: int = 8         # nombre d'iso-courbes (3-15)
+    contour_bins: int = 128         # résolution grille densité pour contours
 
     # Seuils alignés avec PlotWidgetPanel (OpenGL gère 80k pts à 60fps)
     SCATTER_MAX: int = 80_000
     DENSITY_MIN: int = 500_000
 
-    def resolve_render_mode(self, n_events: int, force_density_coloring: bool = False) -> RenderMode:
+    def resolve_render_mode(
+        self,
+        n_events: int,
+        force_density_coloring: bool = False,
+    ) -> RenderMode:
         """
         Retourne le RenderMode optimal.
-        Si force_density_coloring=True (bouton densité coché), reste en SCATTER
-        même au-delà de SCATTER_MAX — la coloration densité est appliquée via
-        density_coloring=True dans set_data_2d(), pas via set_data_density().
+
+        Priorités (du plus haut au plus bas) :
+          1. contour_mode → CONTOUR (override total, quelle que soit la taille)
+          2. force_density_coloring → SCATTER avec density_coloring=True
+          3. Volume < SCATTER_MAX → SCATTER
+          4. Volume > DENSITY_MIN → DENSITY
+          5. Entre les deux → HYBRID
         """
+        if self.contour_mode:
+            return RenderMode.CONTOUR
         if force_density_coloring:
-            # Densité KDE scatter toujours en mode SCATTER (coloration dans set_data_2d)
             return RenderMode.SCATTER
         if n_events <= self.SCATTER_MAX:
             return RenderMode.SCATTER

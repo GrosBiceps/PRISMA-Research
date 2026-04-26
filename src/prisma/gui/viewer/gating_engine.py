@@ -839,33 +839,89 @@ class PrismaFlowEngine(QObject if _QT_AVAILABLE else object):  # type: ignore[mi
         _logger.info("Résultats archivés : %s → %s", group_name, out_dir)
 
     def load_gml(self, gml_path: Union[str, Path]) -> None:
-        """Importe une stratégie GatingML 2.0 (Session uniquement)."""
+        """
+        Importe une stratégie GatingML 2.0 dans la Session courante.
+
+        Stratégie : parse le XML → GatingStrategy → recrée la Session
+        en réinjectant les samples déjà chargés.
+        Compatible FlowKit ≥ 0.9 (API parse_gating_xml + Session(gating_strategy=...)).
+        """
         self._require_flowkit()
         if self._is_workspace():
             raise PrismaEngineError("load_gml() non disponible sur Workspace.")
         gml_path = Path(gml_path)
         if not gml_path.is_file():
             raise FileNotFoundError(f"GatingML introuvable : {gml_path}")
-        existing_ids = list(self._backend.get_sample_ids())
-        session = fk.Session.from_gml(str(gml_path))
-        if existing_ids:
-            for sid in existing_ids:
-                try:
-                    session.add_samples(self._backend.get_sample(sid))
-                except Exception:
-                    pass
-        self._backend = session
+
+        # Récupérer les samples existants avant de reconstruire la session
+        try:
+            existing_ids = list(self._backend.get_sample_ids())
+        except Exception:
+            existing_ids = []
+
+        # Parser le GatingML → GatingStrategy
+        try:
+            strategy = fk.parse_gating_xml(str(gml_path))
+        except AttributeError:
+            # Fallback si parse_gating_xml absent (FlowKit très ancien)
+            strategy = None
+
+        if strategy is not None:
+            # Reconstruire la Session avec la stratégie importée
+            new_session = fk.Session(gating_strategy=strategy)
+        else:
+            # Dernier fallback : Session vide (perd la stratégie)
+            _logger.warning("parse_gating_xml indisponible — stratégie GML non chargée")
+            new_session = fk.Session()
+
+        # Réinjecter les samples
+        for sid in existing_ids:
+            try:
+                new_session.add_samples(self._backend.get_sample(sid))
+            except Exception as e:
+                _logger.debug("Réinjection sample '%s' ignorée : %s", sid, e)
+
+        self._backend = new_session
+        # Invalider le cache membership (stratégie changée)
+        self._invalidate_membership_cache()
         _logger.info("GatingML importé : %s", gml_path.name)
 
     def export_gml(self, output_path: Union[str, Path], sample_id: Optional[str] = None) -> None:
-        """Exporte la stratégie en GatingML 2.0 (Session uniquement)."""
+        """
+        Exporte la stratégie en GatingML 2.0 (Session uniquement).
+
+        API FlowKit ≥ 0.9 : fk.export_gatingml(gating_strategy, file_handle).
+        Fallback sur session.export_gml() si l'ancienne API existe.
+        """
         self._require_flowkit()
         if self._is_workspace():
             raise PrismaEngineError("export_gml() non disponible sur Workspace.")
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as fh:
-            self._as_session().export_gml(fh, sample_id=sample_id)
+
+        import io as _io
+
+        session = self._as_session()
+
+        # Tenter la nouvelle API en priorité : fk.export_gatingml(strategy, fh)
+        try:
+            strategy = session.gating_strategy
+            buf = _io.BytesIO()
+            fk.export_gatingml(strategy, buf, sample_id=sample_id)
+            content = buf.getvalue()
+        except (AttributeError, TypeError):
+            # Fallback : ancienne API session.export_gml(fh) si elle existe
+            try:
+                buf = _io.BytesIO()
+                session.export_gml(buf, sample_id=sample_id)
+                content = buf.getvalue()
+            except (AttributeError, TypeError):
+                buf_text = _io.StringIO()
+                session.export_gml(buf_text, sample_id=sample_id)
+                content = buf_text.getvalue().encode("utf-8")
+
+        with open(output_path, "wb") as fh:
+            fh.write(content)
         _logger.info("GatingML exporté : %s", output_path)
 
     # ------------------------------------------------------------------
@@ -1781,9 +1837,87 @@ class PrismaFlowEngine(QObject if _QT_AVAILABLE else object):  # type: ignore[mi
         gate_path: Optional[Tuple[str, ...]] = None,
         sample_id: Optional[str] = None,
     ) -> np.ndarray:
-        """Retourne le masque booléen d'appartenance à une gate."""
+        """
+        Retourne le masque booléen d'appartenance à une gate.
+
+        Pour les QuadrantGates : FlowKit ne supporte pas get_gate_membership
+        sur la QuadrantGate parente. On calcule le masque union des 4 sous-quadrants
+        (tout événement appartenant à au moins un quadrant = dans la QuadrantGate).
+        """
         sid = sample_id or self._require_active_sample()
-        return self._backend.get_gate_membership(sid, gate_name, gate_path=gate_path)
+        try:
+            arr = self._backend.get_gate_membership(sid, gate_name, gate_path=gate_path)
+            return np.asarray(arr, dtype=bool).flatten()
+        except Exception as exc:
+            # Fallback QuadrantGate : calculer depuis x_threshold / y_threshold
+            try:
+                paths = self.find_gate_paths(gate_name)
+                gp = paths[0] if paths else gate_path
+                gate_obj = self._backend.get_gate(gate_name, gate_path=gp)
+                if gate_obj is not None and "Quadrant" in type(gate_obj).__name__:
+                    return self._get_quadrant_gate_membership(gate_obj, sid)
+            except Exception as inner:
+                _logger.debug("QuadrantGate fallback membership échoué: %s", inner)
+            raise exc
+
+    def _get_quadrant_gate_membership(
+        self,
+        gate_obj: Any,
+        sample_id: str,
+    ) -> np.ndarray:
+        """
+        Calcule l'union des 4 quadrants d'une QuadrantGate.
+        Retourne un masque booléen : True si l'événement est dans au moins un quadrant.
+        """
+        quad_ids = list(getattr(gate_obj, "quadrants", {}).keys())
+        if not quad_ids:
+            raise PrismaEngineError(f"QuadrantGate sans quadrants définis")
+
+        full_df_size = None
+        combined = None
+        for qid in quad_ids:
+            try:
+                arr = self._backend.get_gate_membership(sample_id, qid)
+                arr_bool = np.asarray(arr, dtype=bool).flatten()
+                if combined is None:
+                    combined = arr_bool.copy()
+                    full_df_size = len(arr_bool)
+                else:
+                    combined |= arr_bool
+            except Exception as exc:
+                _logger.debug("Quadrant '%s' membership ignoré : %s", qid, exc)
+
+        if combined is None:
+            raise PrismaEngineError("Impossible d'obtenir le membership d'aucun sous-quadrant")
+        return combined
+
+    def get_quadrant_memberships(
+        self,
+        gate_name: str,
+        gate_path: Optional[Tuple[str, ...]] = None,
+        sample_id: Optional[str] = None,
+    ) -> Dict[str, np.ndarray]:
+        """
+        Retourne les 4 masques booléens distincts d'une QuadrantGate.
+
+        Returns:
+            {quadrant_id: np.ndarray[bool]} — un masque par quadrant (Q1/Q2/Q3/Q4).
+        """
+        sid = sample_id or self._require_active_sample()
+        paths = self.find_gate_paths(gate_name)
+        gp = paths[0] if paths else gate_path
+        gate_obj = self._backend.get_gate(gate_name, gate_path=gp)
+        if gate_obj is None or "Quadrant" not in type(gate_obj).__name__:
+            raise PrismaEngineError(f"'{gate_name}' n'est pas une QuadrantGate")
+
+        result: Dict[str, np.ndarray] = {}
+        for qid in getattr(gate_obj, "quadrants", {}).keys():
+            try:
+                arr = self._backend.get_gate_membership(sid, qid)
+                result[qid] = np.asarray(arr, dtype=bool).flatten()
+            except Exception as exc:
+                _logger.debug("Quadrant '%s' membership ignoré : %s", qid, exc)
+        return result
 
     def get_analysis_report(self, group_name: Optional[str] = None) -> pd.DataFrame:
         """
