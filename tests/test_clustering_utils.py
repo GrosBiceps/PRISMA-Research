@@ -6,7 +6,7 @@ entrées synthétiques connues, garantissant la stabilité numérique de ces cal
 """
 
 import pytest
-from flowsom_pipeline_pro.src.core.clustering import compute_optimal_rlen, compute_optimal_grid
+from flowsom_pipeline_pro.src.prisma.core.clustering import compute_optimal_rlen, compute_optimal_grid
 
 
 # ── compute_optimal_rlen ──────────────────────────────────────────────────────

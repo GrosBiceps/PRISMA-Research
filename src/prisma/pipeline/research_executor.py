@@ -21,9 +21,9 @@ import pandas as pd
 from prisma.core.registry import StrategyRegistry
 from prisma.strategies.base import ClusterParams, DimReducParams
 
-from src.io.fcs_reader import get_fcs_files, load_fcs_files
-from src.io.fcs_writer import export_to_fcs_kaluza
-from src.models.pipeline_result import ClusteringMetrics, PipelineResult
+from src.prisma.io.fcs_reader import get_fcs_files, load_fcs_files
+from src.prisma.io.fcs_writer import export_to_fcs_kaluza
+from src.prisma.core.models_legacy.pipeline_result import ClusteringMetrics, PipelineResult
 
 log = logging.getLogger("prisma.research.executor")
 
@@ -177,7 +177,17 @@ class ResearchPipelineExecutor:
             params = self._build_dimred_params(strategy_name, cfg, wizard_cfg)
             log.info("[RUO] DimRed -> %s", strategy_name)
             try:
-                embedding = self.fit_transform(data_matrix, strategy_name, params)
+                from prisma.cache.embedding_cache import get_or_compute
+
+                params_dict = {k: getattr(params, k) for k in vars(params)} \
+                    if hasattr(params, "__dataclass_fields__") else dict(vars(params))
+
+                def _run_dimred(data, **kw):
+                    return self.fit_transform(data, strategy_name, params)
+
+                embedding = get_or_compute(
+                    data_matrix, params_dict, _run_dimred, tag=strategy_name
+                )
                 dimred_outputs[method] = np.asarray(embedding)
             except Exception as exc:
                 log.warning("[RUO] DimRed '%s' ignoré: %s", strategy_name, exc)
@@ -195,7 +205,17 @@ class ResearchPipelineExecutor:
             params = self._build_cluster_params(strategy_name, cfg, wizard_cfg)
             log.info("[RUO] Clustering -> %s", strategy_name)
             try:
-                labels = self.fit_predict(data_matrix, strategy_name, params)
+                from prisma.cache.embedding_cache import get_or_compute
+
+                params_dict = {k: getattr(params, k) for k in vars(params)} \
+                    if hasattr(params, "__dataclass_fields__") else dict(vars(params))
+
+                def _run_cluster(data, **kw):
+                    return self.fit_predict(data, strategy_name, params)
+
+                labels = get_or_compute(
+                    data_matrix, params_dict, _run_cluster, tag=strategy_name
+                )
                 cluster_outputs[method] = np.asarray(labels)
             except Exception as exc:
                 log.warning("[RUO] Clustering '%s' ignoré: %s", strategy_name, exc)
@@ -356,7 +376,7 @@ class ResearchPipelineExecutor:
             raise FileNotFoundError(f"Workspace de gating introuvable: {workspace}")
 
         try:
-            from src.gui.viewer.gating_engine import PrismaEngineError, PrismaFlowEngine
+            from src.prisma.gui.viewer.gating_engine import PrismaEngineError, PrismaFlowEngine
         except Exception as exc:
             raise RuntimeError(
                 "FlowKit/PrismaFlowEngine indisponible: impossible de résoudre le contexte de gating."

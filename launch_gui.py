@@ -204,6 +204,22 @@ else:
 # Important: must run before importing Qt modules / creating QApplication.
 _enable_windows_crisp_rendering()
 
+# ── Optimisation PyQtGraph — OpenGL + float32 ──────────────────────────────
+# Doit être configuré AVANT toute création de QApplication ou import pyqtgraph.
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
+try:
+    import pyqtgraph as pg
+    pg.setConfigOptions(
+        useOpenGL=True,           # rendu GPU via OpenGL
+        antialias=False,          # trop coûteux sur >100k points
+        enableExperimental=True,  # ImageItem row-major + optimisations
+    )
+    _logging.getLogger("prisma.render").info(
+        "PyQtGraph OpenGL activé (float32 GPU path)"
+    )
+except ImportError:
+    pass
+
 # Wizard v3.0 — remplace main_window pour le mode RUO interactif
 try:
     from gui.wizard_main import main

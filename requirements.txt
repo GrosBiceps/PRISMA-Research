@@ -49,6 +49,13 @@ PyQt5==5.15.11
 PyQtWebEngine==5.15.7        # visualisations interactives (figures HTML)
 qtawesome>=1.3.0             # icônes vectorielles Font Awesome 5 (GUI Wizard)
 
+# ── Performance & stockage out-of-core ───────────────────────
+h5py>=3.10                   # HDF5 lazy loading (SampleHDF5 out-of-core)
+datashader>=0.16             # rasterisation GPU-like millions de points (DatashaderScatterWidget)
+pyopengl>=3.1                # backend OpenGL pour PyQtGraph (60fps render)
+pyopengl-accelerate>=3.1     # accélération OpenGL bindings
+polars>=0.20                 # manipulations in-memory 5-10x vs Pandas (filtrage, agrégation)
+
 # ── Monitoring de performance système ────────────────────────
 psutil>=5.9                  # collecte CPU / RAM / Disque / Réseau en temps réel
 # GPUtil — métriques GPU NVIDIA : dans requirements-gpu.txt uniquement

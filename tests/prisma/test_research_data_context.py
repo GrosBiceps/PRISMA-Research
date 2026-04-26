@@ -83,7 +83,7 @@ def test_load_gated_population_dataframe_from_json_context(
         encoding="utf-8",
     )
 
-    fake_module = types.ModuleType("src.gui.viewer.gating_engine")
+    fake_module = types.ModuleType("src.prisma.gui.viewer.gating_engine")
 
     class PrismaEngineError(Exception):
         pass
@@ -117,7 +117,7 @@ def test_load_gated_population_dataframe_from_json_context(
 
     fake_module.PrismaFlowEngine = PrismaFlowEngine
     fake_module.PrismaEngineError = PrismaEngineError
-    monkeypatch.setitem(sys.modules, "src.gui.viewer.gating_engine", fake_module)
+    monkeypatch.setitem(sys.modules, "src.prisma.gui.viewer.gating_engine", fake_module)
 
     executor = ResearchPipelineExecutor()
     result = executor._load_gated_population_dataframe(

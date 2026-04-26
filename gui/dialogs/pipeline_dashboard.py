@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 pipeline_dashboard.py â€” Vue dashboard 3-colonnes "PRISMA v2".
 
@@ -1395,10 +1395,11 @@ class PipelineDashboard(QDialog):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("FlowSOM â€” Dashboard Pipeline")
-        self.setMinimumSize(1400, 860)
-        self.resize(1600, 920)
+        self.setWindowTitle("FlowSOM — Dashboard Pipeline")
+        self.setMinimumSize(1100, 720)
         self.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        from gui.screen_utils import fit_dialog_to_screen
+        fit_dialog_to_screen(self, ratio=0.92, min_w=1400, min_h=860)
         self.setStyleSheet(_QSS)
         self._build()
 

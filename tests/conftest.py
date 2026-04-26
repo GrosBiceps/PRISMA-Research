@@ -30,9 +30,9 @@ _stubs_needed = [
     "flowsom_pipeline_pro.config.pipeline_config",
     "flowsom_pipeline_pro.config.constants",
     "flowsom_pipeline_pro.src",
-    "flowsom_pipeline_pro.src.exceptions",
+    "flowsom_pipeline_pro.src.prisma.exceptions",
     "flowsom_pipeline_pro.src.utils",
-    "flowsom_pipeline_pro.src.utils.logger",
+    "flowsom_pipeline_pro.src.prisma.utils.logger",
     "flowsom_pipeline_pro.src.pipeline",
     "flowsom_pipeline_pro.src.pipeline.pipeline_executor",
     "flowsom_pipeline_pro.src.analysis",
@@ -44,7 +44,7 @@ for _name in _stubs_needed:
     _ensure_stub(_name)
 
 # --- Exceptions attendues par blast_detection & mrd_calculator ---
-_exc = sys.modules["flowsom_pipeline_pro.src.exceptions"]
+_exc = sys.modules["flowsom_pipeline_pro.src.prisma.exceptions"]
 if not hasattr(_exc, "ClinicalMathError"):
     class ClinicalMathError(Exception):
         pass
@@ -54,7 +54,7 @@ if not hasattr(_exc, "ClinicalMathError"):
     _exc.PanelConfigError = PanelConfigError     # type: ignore
 
 # --- get_logger ---
-_log_mod = sys.modules["flowsom_pipeline_pro.src.utils.logger"]
+_log_mod = sys.modules["flowsom_pipeline_pro.src.prisma.utils.logger"]
 if not hasattr(_log_mod, "get_logger"):
     def _get_logger(name: str = __name__):
         return logging.getLogger(name)

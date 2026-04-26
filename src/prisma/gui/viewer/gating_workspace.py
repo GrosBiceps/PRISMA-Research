@@ -181,10 +181,10 @@ class PlotWidgetPanel(QFrame):
     closeRequested = pyqtSignal()
     activated = pyqtSignal()
 
-    # Seuils rendu hybride (synchronisés avec PlotPanelModel)
-    _SCATTER_MAX = 10_000
-    _DENSITY_MIN = 100_000
-    _SUBSAMPLE_N = 50_000  # points max pour scatter en mode hybride
+    # Seuils rendu hybride — OpenGL gère 80k pts à 60fps sans problème
+    _SCATTER_MAX = 80_000   # scatter pur jusqu'à 80k (OpenGL)
+    _DENSITY_MIN = 500_000  # density map seulement au-delà de 500k
+    _SUBSAMPLE_N = 80_000   # sous-échantillonnage mode hybride
 
     def __init__(
         self,
@@ -390,7 +390,7 @@ class PlotWidgetPanel(QFrame):
             if hasattr(self._engine, "get_population_df_sampled"):
                 df = self._engine.get_population_df_sampled(
                     self._model.gate_node,
-                    max_events=50_000,
+                    max_events=80_000,   # aligné avec _SCATTER_MAX (OpenGL 60fps)
                     transform_id=self._model.transform_id,
                     comp_matrix_id=self._model.comp_id,
                 )
@@ -410,8 +410,10 @@ class PlotWidgetPanel(QFrame):
         n_events = len(df)
         self._lbl_count.setText(f"({n_events:,})")
 
-        # Résolution du mode de rendu
-        render_mode = self._model.resolve_render_mode(n_events)
+        # Résolution du mode de rendu — si densité cochée, force SCATTER (coloration KDE)
+        render_mode = self._model.resolve_render_mode(
+            n_events, force_density_coloring=self._model.density_coloring
+        )
         self._model.render_mode = render_mode
 
         # Labels axes
@@ -454,34 +456,39 @@ class PlotWidgetPanel(QFrame):
         """Rendu 2D avec stratégie hybride scatter/density."""
         n = len(df)
         sid = self._engine.active_sample_id or ""
+        use_density_color = self._model.density_coloring
 
         if mode == RenderMode.SCATTER:
-            self._canvas.set_data_2d(df, x_ch, y_ch, density_coloring=self._model.density_coloring)
+            # Cas normal ET cas bouton densité coché (force_density_coloring → SCATTER)
+            self._canvas.set_data_2d(df, x_ch, y_ch, density_coloring=use_density_color)
 
         elif mode == RenderMode.DENSITY:
-            # Utiliser le cache si valide
-            if self._density_cache.is_valid_for(x_ch, y_ch, sid, n):
-                h = self._density_cache.histogram
-                xe = self._density_cache.x_edges
-                ye = self._density_cache.y_edges
-            else:
-                xs = df[x_ch].to_numpy(dtype=float)
-                ys = df[y_ch].to_numpy(dtype=float)
-                h, xe, ye = np.histogram2d(xs, ys, bins=256)
-                self._density_cache.update(x_ch, y_ch, sid, n, h, xe, ye)
-
-            if hasattr(self._canvas, "set_data_density"):
-                self._canvas.set_data_density(h, xe, ye)
-            else:
-                # Fallback : scatter sous-échantillonné
+            # Volume > 500k : histogram2d ImageItem plein écran
+            # Si densité cochée malgré tout → scatter sous-échantillonné coloré (lisible)
+            if use_density_color:
                 sub = df.sample(min(self._SUBSAMPLE_N, n), random_state=42)
                 self._canvas.set_data_2d(sub, x_ch, y_ch, density_coloring=True)
+            else:
+                if self._density_cache.is_valid_for(x_ch, y_ch, sid, n):
+                    h = self._density_cache.histogram
+                    xe = self._density_cache.x_edges
+                    ye = self._density_cache.y_edges
+                else:
+                    xs = df[x_ch].to_numpy(dtype=np.float32)
+                    ys = df[y_ch].to_numpy(dtype=np.float32)
+                    h, xe, ye = np.histogram2d(xs, ys, bins=256)
+                    self._density_cache.update(x_ch, y_ch, sid, n, h, xe, ye)
 
-        else:  # HYBRID
-            # Density en fond + scatter sous-échantillonné par-dessus
+                if hasattr(self._canvas, "set_data_density"):
+                    self._canvas.set_data_density(h, xe, ye)
+                else:
+                    sub = df.sample(min(self._SUBSAMPLE_N, n), random_state=42)
+                    self._canvas.set_data_2d(sub, x_ch, y_ch, density_coloring=False)
+
+        else:  # HYBRID — density fond + scatter par-dessus
             if not self._density_cache.is_valid_for(x_ch, y_ch, sid, n):
-                xs = df[x_ch].to_numpy(dtype=float)
-                ys = df[y_ch].to_numpy(dtype=float)
+                xs = df[x_ch].to_numpy(dtype=np.float32)
+                ys = df[y_ch].to_numpy(dtype=np.float32)
                 h, xe, ye = np.histogram2d(xs, ys, bins=256)
                 self._density_cache.update(x_ch, y_ch, sid, n, h, xe, ye)
 
@@ -493,7 +500,8 @@ class PlotWidgetPanel(QFrame):
                 )
 
             sub = df.sample(min(self._SUBSAMPLE_N, n), random_state=42)
-            self._canvas.set_data_2d(sub, x_ch, y_ch, density_coloring=False)
+            # En mode HYBRID, density_coloring sur le scatter par-dessus si coché
+            self._canvas.set_data_2d(sub, x_ch, y_ch, density_coloring=use_density_color)
 
     def refresh_from_engine(
         self,

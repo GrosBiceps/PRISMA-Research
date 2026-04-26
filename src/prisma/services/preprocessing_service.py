@@ -279,6 +279,12 @@ def _apply_gating(
     Returns:
         Tuple (X_gated, var_names, combined_mask).
     """
+    from prisma.core.gating_mask import GatingMask as _GM
+
+    def _as_bool(m) -> np.ndarray:
+        """Normalise GatingMask ou np.ndarray bool → np.ndarray bool."""
+        return m.unpack() if isinstance(m, _GM) else np.asarray(m, dtype=bool)
+
     mode = getattr(pregate_cfg, "mode", "auto")
     mode_blastes_vs_normal = getattr(pregate_cfg, "mode_blastes_vs_normal", False)
     n_before = X.shape[0]
@@ -311,10 +317,11 @@ def _apply_gating(
                 min_percentile=getattr(pregate_cfg, "debris_min_percentile", 2.0),
                 max_percentile=getattr(pregate_cfg, "debris_max_percentile", 99.0),
             )
+        bool_mask = _as_bool(mask)
         gating_logger.log(
-            file_name, "G1_debris", n_before, int(mask.sum()), method=mode
+            file_name, "G1_debris", n_before, int(bool_mask.sum()), method=mode
         )
-        combined_mask &= mask
+        combined_mask &= bool_mask
 
     # Gate 2 – Singlets
     if getattr(pregate_cfg, "singlets", True):
@@ -332,18 +339,17 @@ def _apply_gating(
                 ratio_min=getattr(pregate_cfg, "singlet_ratio_min", 0.6),
                 ratio_max=getattr(pregate_cfg, "singlet_ratio_max", 1.5),
             )
+        bool_mask = _as_bool(mask)
         gating_logger.log(
             file_name,
             "G2_singlets",
             int(combined_mask.sum()),
-            int((combined_mask & mask).sum()),
+            int((combined_mask & bool_mask).sum()),
             method=mode,
         )
-        combined_mask &= mask
+        combined_mask &= bool_mask
 
     # Gate 3 – CD45 (SYMÉTRIQUE : appliqué à toutes les conditions, y compris Sain/NBM)
-    # Le pool NBM doit être strictement composé de leucocytes CD45+.
-    # Le KDE calcule le seuil sur la distribution de l'échantillon en cours (sain ou patho).
     if getattr(pregate_cfg, "cd45", True):
         if mode == "auto":
             mask = AutoGating.auto_gate_cd45(
@@ -364,6 +370,7 @@ def _apply_gating(
                 var_names,
                 threshold_percentile=getattr(pregate_cfg, "cd45_min_percentile", 5.0),
             )
+        bool_mask = _as_bool(mask)
         _logger.info(
             "%s [%s]: G3_cd45 appliqué (gating symétrique — leucocytes CD45+ uniquement)",
             file_name,
@@ -373,10 +380,10 @@ def _apply_gating(
             file_name,
             "G3_cd45",
             int(combined_mask.sum()),
-            int((combined_mask & mask).sum()),
+            int((combined_mask & bool_mask).sum()),
             method=mode,
         )
-        combined_mask &= mask
+        combined_mask &= bool_mask
 
     # Gate 4 – CD34+ blastes (optionnel, ASYMÉTRIQUE : ignoré si échantillon sain)
     if getattr(pregate_cfg, "cd34", False):
@@ -405,14 +412,15 @@ def _apply_gating(
                     ),
                     ssc_max_percentile=getattr(pregate_cfg, "cd34_ssc_max", 40.0),
                 )
+            bool_mask = _as_bool(mask)
             gating_logger.log(
                 file_name,
                 "G4_cd34",
                 int(combined_mask.sum()),
-                int((combined_mask & mask).sum()),
+                int((combined_mask & bool_mask).sum()),
                 method=mode,
             )
-            combined_mask &= mask
+            combined_mask &= bool_mask
 
     X_gated = X[combined_mask]
 

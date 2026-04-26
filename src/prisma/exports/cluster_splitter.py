@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-from src.io.fcs_writer import export_to_fcs
+from src.prisma.io.fcs_writer import export_to_fcs
 
 _logger = logging.getLogger(__name__)
 

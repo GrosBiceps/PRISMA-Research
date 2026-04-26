@@ -8,8 +8,8 @@ Utilise des matrices numpy synthétiques avec des distributions connues.
 import numpy as np
 import pytest
 
-from flowsom_pipeline_pro.src.core.gating import PreGating
-from flowsom_pipeline_pro.src.core.auto_gating import GatingSession
+from flowsom_pipeline_pro.src.prisma.core.gating import PreGating
+from flowsom_pipeline_pro.src.prisma.core.auto_gating import GatingSession
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

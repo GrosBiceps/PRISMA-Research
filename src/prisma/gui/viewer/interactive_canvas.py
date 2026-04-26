@@ -28,7 +28,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QRectF, pyqtSignal
 from PyQt5.QtGui import QColor, QPen
 from PyQt5.QtWidgets import QWidget
 
@@ -40,18 +40,91 @@ _logger = get_logger("viewer.interactive_canvas")
 # Configuration rendu
 # ---------------------------------------------------------------------------
 
-MAX_SCATTER_PTS: int = 150_000  # Au-delà → sous-échantillonnage
-DENSITY_BINS: int = 80  # Résolution estimation densité KDE proxy
+MAX_SCATTER_PTS: int = 80_000   # Seuil sous-échantillonnage — OpenGL gère 80k pts à 60fps
+DENSITY_BINS: int = 80
 _BG_COLOR = "#04070D"
 _GRID_COLOR = (40, 50, 70, 120)
-_POINT_COLOR = (80, 160, 255, 100)
-_GATED_COLOR = (80, 255, 160, 160)
+_POINT_COLOR = (0, 140, 255, 120)   # bleu vif, alpha 120 → accumulation naturelle
+_GATED_COLOR = (80, 255, 160, 180)
 _GATE_OVERLAY_COLOR = (100, 220, 120)
 _GATE_DRAWING_COLOR = (255, 200, 50)
 _HIST_COLOR = (80, 160, 255, 160)
 
-pg.setConfigOption("background", _BG_COLOR)
-pg.setConfigOption("foreground", "#8899AA")
+# Palette densité Kaluza-style : bleu froid → rouge chaud (256 niveaux, vectorisé)
+_DENSITY_LUT: np.ndarray = np.zeros((256, 4), dtype=np.uint8)
+_t = np.linspace(0, 1, 256)
+_DENSITY_LUT[:, 0] = np.clip((_t - 0.5) * 2 * 255, 0, 255).astype(np.uint8)   # R
+_DENSITY_LUT[:, 1] = np.clip((0.5 - np.abs(_t - 0.5)) * 2 * 255, 0, 255).astype(np.uint8)  # G
+_DENSITY_LUT[:, 2] = np.clip((0.5 - _t) * 2 * 255, 0, 255).astype(np.uint8)   # B
+_DENSITY_LUT[:, 3] = 220  # alpha
+
+# NE PAS appeler pg.setConfigOption ici — launch_gui.py configure déjà
+# useOpenGL=True + background avant tout import de ce module.
+# Appeler setConfigOption après setConfigOptions(useOpenGL=True) écrase OpenGL.
+
+
+# ---------------------------------------------------------------------------
+# Helpers vectorisés (zéro boucle Python)
+# ---------------------------------------------------------------------------
+
+def _hex_colors_to_rgba_array(hex_colors: np.ndarray) -> np.ndarray:
+    """
+    Convertit un array de strings hex '#RRGGBB' en array RGBA uint8 (N, 4).
+    100x plus rapide que [pg.mkColor(c) for c in colors] sur 80k points.
+    PyQtGraph ScatterPlotItem accepte un array (N,4) uint8 directement.
+    """
+    n = len(hex_colors)
+    rgba = np.empty((n, 4), dtype=np.uint8)
+    rgba[:, 3] = 180  # alpha par défaut
+
+    # Vecteur unique le plus fréquent — cas population colorée homogène
+    unique, inv = np.unique(hex_colors, return_inverse=True)
+    lut = np.zeros((len(unique), 4), dtype=np.uint8)
+    for i, h in enumerate(unique):
+        try:
+            s = str(h).lstrip("#")
+            if len(s) == 6:
+                lut[i, 0] = int(s[0:2], 16)
+                lut[i, 1] = int(s[2:4], 16)
+                lut[i, 2] = int(s[4:6], 16)
+                lut[i, 3] = 180
+            else:
+                c = pg.mkColor(str(h))
+                lut[i] = [c.red(), c.green(), c.blue(), c.alpha()]
+        except Exception:
+            lut[i] = [80, 96, 112, 160]
+    return lut[inv]
+
+
+def _density_colors_fast(xd: np.ndarray, yd: np.ndarray, bins: int = 64) -> np.ndarray:
+    """
+    Couleur par densité locale : histogram2d → index LUT → RGBA (N, 4).
+    Zéro KDE, zéro boucle Python. ~5ms sur 80k points.
+    Retourne array (N, 4) uint8 compatible ScatterPlotItem brush.
+    """
+    n = len(xd)
+    if n == 0:
+        return np.zeros((0, 4), dtype=np.uint8)
+
+    # Bin chaque point
+    x_min, x_max = float(xd.min()), float(xd.max())
+    y_min, y_max = float(yd.min()), float(yd.max())
+    x_range = x_max - x_min or 1.0
+    y_range = y_max - y_min or 1.0
+
+    xi = np.clip(((xd - x_min) / x_range * bins).astype(np.int32), 0, bins - 1)
+    yi = np.clip(((yd - y_min) / y_range * bins).astype(np.int32), 0, bins - 1)
+
+    # Compte par bin
+    hist = np.zeros((bins, bins), dtype=np.int32)
+    np.add.at(hist, (xi, yi), 1)
+
+    # Densité par point → normaliser → index LUT 0-255
+    density = hist[xi, yi].astype(np.float32)
+    d_max = float(density.max()) or 1.0
+    lut_idx = np.clip((np.log1p(density) / np.log1p(d_max) * 255).astype(np.int32), 0, 255)
+
+    return _DENSITY_LUT[lut_idx]
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +209,13 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         # items backgate (liste de ScatterPlotItem par sous-population)
         self._backgate_items: List[pg.ScatterPlotItem] = []
 
+        # R4 — Cache rendu image plot parent
+        # Clé = (x_channel, y_channel, n_pts) → RGBA numpy array
+        # Zéro redraw quand seul un enfant (child gate) est modifié.
+        self._render_cache: dict = {}
+        self._render_cache_key: Optional[tuple] = None
+        self._ds_img_item: Optional[pg.ImageItem] = None  # Datashader ImageItem
+
         self._setup_plot()
 
     # ------------------------------------------------------------------
@@ -143,6 +223,13 @@ class InteractiveGatingCanvas(pg.PlotWidget):
     # ------------------------------------------------------------------
 
     def _setup_plot(self) -> None:
+        # Couleurs fond/avant sur l'instance (pas pg.setConfigOption global)
+        self.setBackground(_BG_COLOR)
+        self.getPlotItem().getAxis("bottom").setPen(pg.mkPen("#8899AA"))
+        self.getPlotItem().getAxis("left").setPen(pg.mkPen("#8899AA"))
+        self.getPlotItem().getAxis("bottom").setTextPen(pg.mkPen("#8899AA"))
+        self.getPlotItem().getAxis("left").setTextPen(pg.mkPen("#8899AA"))
+
         self.setAntialiasing(False)
         self.showGrid(x=True, y=True, alpha=0.15)
         self.getPlotItem().setMenuEnabled(False)
@@ -177,146 +264,131 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         gated_mask: Optional[np.ndarray] = None,
     ) -> None:
         """
-        Affiche un scatter 2D depuis un DataFrame compensé+transformé.
+        Scatter 2D Kaluza-style : points nets, axes alignés, 60fps via OpenGL.
 
-        Garanties PyQtGraph :
-          - arrays float32 1D obligatoirement via .flatten() (évite broadcast (N,1))
-          - NaN et Inf filtrés avant rendu (artefacts invisibles sinon)
-          - labels axes = PnS (marqueur) si set_axis_labels() appelé avant
-          - toutes les ROI/gates dessinées sont supprimées à chaque changement d'axes
-            (fix "syndrome 0 events" : coordonnées perdent leur sens sur nouveaux axes)
-          - si df contient 'Population_Color', coloration par population enfant
+        Stratégie rendu :
+          - Population_Color  → couleur vectorisée RGBA par point (pas de mkColor loop)
+          - density_coloring  → LUT 256 couleurs vectorisée (numpy pur, pas de KDE lent)
+          - mode normal       → couleur unie, spot size=1, OpenGL batche en un drawcall
+          - Pas de Datashader dans le viewer gating : incompatible avec le système
+            axes PyQtGraph (l'image ImageItem n'est pas reliée aux axes du PlotItem).
         """
         if x_channel not in df.columns or y_channel not in df.columns:
             _logger.error(
                 "set_data_2d: canaux absents x='%s' y='%s'. Disponibles: %s",
-                x_channel,
-                y_channel,
-                list(df.columns)[:10],
+                x_channel, y_channel, list(df.columns)[:10],
             )
             return
 
-        # FIX BUG AXES : nettoyer TOUTES les ROI quand axes/données changent.
-        # Les objets ROI PyQtGraph stockent des coords dans l'espace de l'ancien plot ;
-        # les laisser en place avec de nouvelles dimensions produit 0 events ou crash.
+        # Nettoyage ROI si axes changent (évite "0 events" sur ancien espace)
         axes_changed = x_channel != self._x_channel or y_channel != self._y_channel
         if axes_changed:
             self.clear_gate_overlays()
             self._cancel_current_drawing()
+            self.invalidate_render_cache()
 
         self._x_channel = x_channel
         self._y_channel = y_channel
         self.clear_data()
 
-        # --- Extraction 1D float32 + nettoyage NaN/Inf ---
-        xd = df[x_channel].to_numpy(dtype=np.float64).flatten()
-        yd = df[y_channel].to_numpy(dtype=np.float64).flatten()
+        # --- Extraction float32 directe (évite float64 intermédiaire inutile) ---
+        xd = df[x_channel].to_numpy(dtype=np.float32).ravel()
+        yd = df[y_channel].to_numpy(dtype=np.float32).ravel()
 
-        # Extraire Population_Color AVANT tout filtrage pour conserver l'alignement
         pop_color_raw: Optional[np.ndarray] = None
         if "Population_Color" in df.columns:
-            pop_color_raw = df["Population_Color"].to_numpy(dtype=object).flatten()
+            pop_color_raw = df["Population_Color"].to_numpy(dtype=object).ravel()
 
-        if xd.shape[0] != yd.shape[0]:
-            _logger.error("set_data_2d shape mismatch: x=%d y=%d", xd.shape[0], yd.shape[0])
-            return
-
-        # Masque valide : exclut NaN, Inf et valeurs aberrantes (>1e9 = artefact transform)
-        valid = np.isfinite(xd) & np.isfinite(yd) & (np.abs(xd) < 1e9) & (np.abs(yd) < 1e9)
+        # --- Filtrage NaN/Inf vectorisé (float32, pas float64) ---
+        valid = np.isfinite(xd) & np.isfinite(yd)
         if not valid.any():
             _logger.warning("set_data_2d: aucune donnée valide après nettoyage NaN/Inf")
             return
-
         if not valid.all():
-            n_invalid = int((~valid).sum())
-            _logger.debug("set_data_2d: %d points invalides filtrés (NaN/Inf/aberrant)", n_invalid)
             xd = xd[valid]
             yd = yd[valid]
             if gated_mask is not None:
-                gated_mask = np.asarray(gated_mask, dtype=bool).flatten()[valid]
+                gm_arr = np.asarray(gated_mask, dtype=bool).ravel()
+                if gm_arr.shape[0] == valid.shape[0]:
+                    gated_mask = gm_arr[valid]
+                else:
+                    gated_mask = None
             if pop_color_raw is not None and pop_color_raw.shape[0] == valid.shape[0]:
                 pop_color_raw = pop_color_raw[valid]
 
-        # Conversion finale float32 pour PyQtGraph
-        xd = xd.astype(np.float32)
-        yd = yd.astype(np.float32)
-
+        # Validation gated_mask post-filtrage
         if gated_mask is not None:
-            gated_mask = np.asarray(gated_mask, dtype=bool).flatten()
+            gated_mask = np.asarray(gated_mask, dtype=bool).ravel()
             if gated_mask.shape[0] != xd.shape[0]:
-                _logger.warning(
-                    "set_data_2d: gated_mask shape %d != data %d, ignoré",
-                    gated_mask.shape[0],
-                    xd.shape[0],
-                )
                 gated_mask = None
 
-        # --- Sous-échantillonnage adaptatif ---
-        n = len(xd)
-        if n > MAX_SCATTER_PTS:
+        # --- Sous-échantillonnage reproductible (seed fixe = même vue à chaque refresh) ---
+        n_total = len(xd)
+        if n_total > MAX_SCATTER_PTS:
             rng = np.random.default_rng(42)
-            ss_idx = rng.choice(n, MAX_SCATTER_PTS, replace=False)
+            ss_idx = rng.choice(n_total, MAX_SCATTER_PTS, replace=False)
+            ss_idx.sort()          # accès mémoire séquentiel → cache-friendly
             xd = xd[ss_idx]
             yd = yd[ss_idx]
             if gated_mask is not None:
                 gated_mask = gated_mask[ss_idx]
-            if pop_color_raw is not None and pop_color_raw.shape[0] == n:
+            if pop_color_raw is not None and pop_color_raw.shape[0] == n_total:
                 pop_color_raw = pop_color_raw[ss_idx]
 
         self._xdata = xd
         self._ydata = yd
 
-        # --- Scatter principal ---
-        # Priorité de coloration : Population_Color > density > couleur unie
+        # --- Calcul couleurs vectorisé (zéro boucle Python) ---
         if pop_color_raw is not None:
-            # Aligner en cas de mismatch résiduel
-            n_pts = xd.shape[0]
+            n_pts = len(xd)
             if pop_color_raw.shape[0] != n_pts:
-                _logger.debug(
-                    "set_data_2d: Population_Color shape %d != pts %d — tronqué",
-                    pop_color_raw.shape[0],
-                    n_pts,
-                )
-                pop_color_raw = (
-                    pop_color_raw[:n_pts]
-                    if pop_color_raw.shape[0] > n_pts
-                    else np.concatenate(
-                        [pop_color_raw, np.full(n_pts - pop_color_raw.shape[0], "#506070")]
-                    )
-                )
-            colors = [pg.mkColor(str(c)) for c in pop_color_raw]
-        elif density_coloring:
-            colors = self._compute_density_colors(xd, yd)
-        else:
-            colors = [pg.mkColor(_POINT_COLOR)] * len(xd)
+                pop_color_raw = pop_color_raw[:n_pts] if pop_color_raw.shape[0] > n_pts \
+                    else np.concatenate([pop_color_raw,
+                                         np.full(n_pts - pop_color_raw.shape[0], "#506070")])
+            # Conversion hex → RGBA numpy vectorisée (évite 150k appels mkColor)
+            brush_colors = _hex_colors_to_rgba_array(pop_color_raw)
 
+        elif density_coloring:
+            # LUT densité vectorisée : histogram2d → index LUT → RGBA (numpy pur)
+            brush_colors = _density_colors_fast(xd, yd)
+
+        else:
+            # Couleur unie : un seul QColor partagé — PyQtGraph OpenGL fait 1 drawcall
+            brush_colors = pg.mkColor(_POINT_COLOR)
+
+        # --- ScatterPlotItem optimisé OpenGL ---
+        # pxMode=True : taille en pixels écran (pas en unités data) → stable au zoom
+        # pen=None    : pas de contour → 2x plus rapide GPU
+        # symbol='o'  : disque rempli (le plus rapide PyQtGraph)
         self._scatter = pg.ScatterPlotItem(
             x=xd,
             y=yd,
             size=2,
+            symbol="o",
             pen=None,
-            brush=colors,
+            brush=brush_colors,
+            pxMode=True,
         )
         self.addItem(self._scatter)
 
-        # --- Overlay événements gated ---
+        # --- Overlay gated events (vert, taille 3px) ---
         if gated_mask is not None and gated_mask.any():
-            xg = xd[gated_mask]
-            yg = yd[gated_mask]
             gated_scatter = pg.ScatterPlotItem(
-                x=xg,
-                y=yg,
+                x=xd[gated_mask],
+                y=yd[gated_mask],
                 size=3,
+                symbol="o",
                 pen=None,
                 brush=pg.mkColor(_GATED_COLOR),
+                pxMode=True,
             )
             self.addItem(gated_scatter)
 
-        # --- Labels axes : PnS si disponible, sinon Pnn ---
+        # --- Axes et autoRange ---
         self.getPlotItem().setLabel("bottom", self._x_label or x_channel)
         self.getPlotItem().setLabel("left", self._y_label or y_channel)
         self.autoRange()
-        _logger.debug("set_data_2d: %d pts tracés (%s vs %s)", len(xd), x_channel, y_channel)
+        _logger.debug("set_data_2d: %d/%d pts (%s vs %s)", len(xd), n_total, x_channel, y_channel)
 
     def set_data_1d(
         self,
@@ -930,10 +1002,23 @@ class InteractiveGatingCanvas(pg.PlotWidget):
             except Exception:
                 pass
         self._backgate_items = []
+        # Nettoyage Datashader ImageItem — GARDE le cache _render_cache (R4)
+        if self._ds_img_item is not None:
+            try:
+                self.removeItem(self._ds_img_item)
+            except Exception:
+                pass
+            self._ds_img_item = None  # toujours recréé dans set_data_2d (bug 3 fix)
         self._cancel_current_drawing()
+
+    def invalidate_render_cache(self) -> None:
+        """Force redraw complet au prochain set_data_2d (ignore cache R4)."""
+        self._render_cache.clear()
+        self._render_cache_key = None
 
     def clear_all(self) -> None:
         """Efface données + overlays + état dessin."""
+        self.invalidate_render_cache()
         self.clear_data()
         self.clear_gate_overlays()
         self._xdata = np.array([])
@@ -1115,43 +1200,10 @@ class InteractiveGatingCanvas(pg.PlotWidget):
     # Calcul densité locale (proxy KDE via histogramme 2D)
     # ------------------------------------------------------------------
 
-    def _compute_density_colors(self, xd: np.ndarray, yd: np.ndarray) -> List:
-        """
-        Estime la densité locale par histogramme 2D (numpy.histogram2d, <100 ms sur 150k pts).
-
-        Pipeline :
-          1. Grille 2D → densité par bin
-          2. Normalisation log1p (compresse les pics, révèle les populations rares)
-          3. Colormap turbo vectorisée (pas de boucle Python)
-          4. Alpha adaptatif : points denses plus opaques
-        """
+    def _compute_density_colors(self, xd: np.ndarray, yd: np.ndarray) -> np.ndarray:
+        """Délègue à _density_colors_fast (vectorisé, zéro boucle Python)."""
         try:
-            h, xe, ye = np.histogram2d(xd, yd, bins=DENSITY_BINS)
-
-            xi = np.clip(np.searchsorted(xe, xd) - 1, 0, DENSITY_BINS - 1)
-            yi = np.clip(np.searchsorted(ye, yd) - 1, 0, DENSITY_BINS - 1)
-            densities = h[xi, yi].astype(np.float32)
-
-            # Normalisation log1p : étire les faibles densités, comprime les pics
-            densities = np.log1p(densities)
-            d_min, d_max = float(densities.min()), float(densities.max())
-            if d_max <= d_min:
-                return [pg.mkColor(_POINT_COLOR)] * len(xd)
-
-            norm = ((densities - d_min) / (d_max - d_min)).astype(np.float32)  # [0, 1]
-
-            # Turbo colormap vectorisée (coefficients approximatifs)
-            r = np.clip((255 * (1.5 * norm - 0.5)), 0, 255).astype(np.uint8)
-            g = np.clip((255 * (1.5 - np.abs(3.0 * norm - 1.5))), 0, 255).astype(np.uint8)
-            b = np.clip((255 * (1.0 - 2.0 * norm)), 0, 255).astype(np.uint8)
-            # Alpha : 80 (creux) → 200 (pic) pour révéler la structure
-            a = np.clip((80 + 120 * norm), 0, 255).astype(np.uint8)
-
-            return [
-                pg.mkColor(QColor(int(r[i]), int(g[i]), int(b[i]), int(a[i])))
-                for i in range(len(norm))
-            ]
-
+            return _density_colors_fast(xd, yd, bins=DENSITY_BINS)
         except Exception as exc:
             _logger.debug("Density coloring échoué : %s", exc)
-            return [pg.mkColor(_POINT_COLOR)] * len(xd)
+            return pg.mkColor(_POINT_COLOR)

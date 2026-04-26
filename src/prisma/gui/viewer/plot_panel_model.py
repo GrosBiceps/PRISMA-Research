@@ -51,12 +51,20 @@ class PlotPanelModel:
     panel_id: str = ""
     density_coloring: bool = False  # coloration KDE scatter (mode SCATTER uniquement)
 
-    # Seuils de décision du mode de rendu
-    SCATTER_MAX: int = 10_000
-    DENSITY_MIN: int = 100_000
+    # Seuils alignés avec PlotWidgetPanel (OpenGL gère 80k pts à 60fps)
+    SCATTER_MAX: int = 80_000
+    DENSITY_MIN: int = 500_000
 
-    def resolve_render_mode(self, n_events: int) -> RenderMode:
-        """Retourne le RenderMode optimal pour un volume d'événements donné."""
+    def resolve_render_mode(self, n_events: int, force_density_coloring: bool = False) -> RenderMode:
+        """
+        Retourne le RenderMode optimal.
+        Si force_density_coloring=True (bouton densité coché), reste en SCATTER
+        même au-delà de SCATTER_MAX — la coloration densité est appliquée via
+        density_coloring=True dans set_data_2d(), pas via set_data_density().
+        """
+        if force_density_coloring:
+            # Densité KDE scatter toujours en mode SCATTER (coloration dans set_data_2d)
+            return RenderMode.SCATTER
         if n_events <= self.SCATTER_MAX:
             return RenderMode.SCATTER
         if n_events >= self.DENSITY_MIN:

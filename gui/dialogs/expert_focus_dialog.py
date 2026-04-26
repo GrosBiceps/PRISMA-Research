@@ -646,6 +646,10 @@ class ExpertFocusDialog(QDialog):
         self._mfi_data = mfi_data
         self._marker_cols: List[str] = marker_cols or []
 
+        # Plein écran adapté à l'écran
+        from gui.screen_utils import fit_dialog_to_screen
+        fit_dialog_to_screen(self, ratio=0.92, min_w=1200, min_h=800)
+
         # Pré-calculer le statut initial de chaque nœud
         # included = algo OU déjà ajouté manuellement
         self._initial_included: Dict[int, bool] = {}

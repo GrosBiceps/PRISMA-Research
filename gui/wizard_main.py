@@ -1327,7 +1327,7 @@ class PrismaWizard(QMainWindow):
         super().__init__()
         self.setWindowTitle("PRISMA Research — RUO v3.0")
         self.setMinimumSize(1100, 720)
-        self.resize(1440, 900)
+        # Taille initiale adaptée à l'écran — showMaximized() dans main()
 
         # Icône fenêtre
         ico_path = _asset_path("prisma_logo.ico")
@@ -1591,7 +1591,7 @@ class PrismaWizard(QMainWindow):
 
         if self._gating_win is None or self._gating_workspace_widget is None:
             try:
-                from src.gui.viewer.gating_workspace import PrismaGatingWorkspace
+                from src.prisma.gui.viewer.gating_workspace import PrismaGatingWorkspace
 
                 self._gating_workspace_widget = PrismaGatingWorkspace()
                 self._gating_workspace_widget.gatingContextSaved.connect(
@@ -1600,8 +1600,10 @@ class PrismaWizard(QMainWindow):
 
                 self._gating_win = QMainWindow(self)
                 self._gating_win.setWindowTitle("PRISMA Gating Workspace")
-                self._gating_win.resize(1500, 900)
+                self._gating_win.setMinimumSize(1100, 720)
                 self._gating_win.setCentralWidget(self._gating_workspace_widget)
+                from gui.screen_utils import maximize_window
+                maximize_window(self._gating_win)
             except Exception as exc:
                 QMessageBox.critical(
                     self,
@@ -1833,7 +1835,8 @@ def main() -> None:
     # IMPORTANT: installer le hook global avant d'entrer dans la boucle Qt.
     _install_global_exception_hook()
     win = PrismaWizard()
-    win.show()
+    from gui.screen_utils import maximize_window
+    maximize_window(win)
     sys.exit(app.exec_())
 
 

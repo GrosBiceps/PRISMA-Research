@@ -58,7 +58,27 @@ class Sample:
 
     @property
     def matrix(self) -> np.ndarray:
-        return self.data.values
+        """float32 — -50% RAM vs float64, compatible GPU direct."""
+        return self.data.to_numpy(dtype=np.float32, copy=False)
+
+    def to_float32(self) -> "Sample":
+        """Convertit toutes les colonnes numériques en float32 in-place."""
+        num_cols = self.data.select_dtypes(include="number").columns
+        self.data[num_cols] = self.data[num_cols].astype(np.float32)
+        return self
+
+    def to_hdf5(self, hdf5_path: "str | Path") -> "SampleHDF5":
+        """
+        Exporte vers HDF5 compressé et retourne un SampleHDF5 lazy.
+        Conversion automatique en float32. Appel unique — cache local ensuite.
+        """
+        from prisma.core.sample_hdf5 import SampleHDF5
+        return SampleHDF5.from_sample(self, hdf5_path)
+
+    def to_gating_mask(self, bool_array: np.ndarray) -> "GatingMask":
+        """Enveloppe un masque booléen dans un GatingMask compressé."""
+        from prisma.core.gating_mask import GatingMask
+        return GatingMask(bool_array)
 
     def filter(self, mask: np.ndarray) -> "Sample":
         """Retourne nouveau Sample filtré par masque booléen."""

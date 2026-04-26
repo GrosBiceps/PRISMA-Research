@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from src.gui.viewer import gating_engine as ge_mod
-from src.gui.viewer import gating_workspace as gw_mod
-from src.gui.viewer import interactive_canvas as ic_mod
+from src.prisma.gui.viewer import gating_engine as ge_mod
+from src.prisma.gui.viewer import gating_workspace as gw_mod
+from src.prisma.gui.viewer import interactive_canvas as ic_mod
 
 
 class _DummyCanvas:

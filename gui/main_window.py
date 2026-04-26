@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from config.pipeline_config import PipelineConfig
-    from src.models.pipeline_result import PipelineResult
+    from src.prisma.core.models_legacy.pipeline_result import PipelineResult
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -3124,8 +3124,9 @@ class FlowSomAnalyzerPro(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Aperçu des fichiers FCS détectés")
-        dlg.resize(900, 520)
         dlg.setStyleSheet(self.styleSheet())
+        from gui.screen_utils import fit_dialog_to_screen
+        fit_dialog_to_screen(dlg, ratio=0.75, min_w=900, min_h=520)
         vbox = QVBoxLayout(dlg)
         vbox.setContentsMargins(16, 16, 16, 12)
         vbox.setSpacing(10)
@@ -3249,8 +3250,9 @@ class FlowSomAnalyzerPro(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Renommage des colonnes FCS — harmonisation Kaluza")
-        dlg.resize(900, 640)
         dlg.setStyleSheet(self.styleSheet())
+        from gui.screen_utils import fit_dialog_to_screen
+        fit_dialog_to_screen(dlg, ratio=0.75, min_w=900, min_h=640)
         vbox = QVBoxLayout(dlg)
         vbox.setContentsMargins(16, 16, 16, 12)
         vbox.setSpacing(10)
