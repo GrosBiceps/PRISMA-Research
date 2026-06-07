@@ -430,11 +430,15 @@ class PlotWidgetPanel(QFrame):
         if not x_ch:
             return
 
+        # En mode CONTOUR, charger toutes les données (histogram2d bénéficie du volume complet)
+        # En mode SCATTER/HYBRID, limiter à 80k pour la fluidité OpenGL
+        max_ev = None if self._model.contour_mode else 80_000
+
         try:
-            if hasattr(self._engine, "get_population_df_sampled"):
+            if max_ev is not None and hasattr(self._engine, "get_population_df_sampled"):
                 df = self._engine.get_population_df_sampled(
                     self._model.gate_node,
-                    max_events=80_000,   # aligné avec _SCATTER_MAX (OpenGL 60fps)
+                    max_events=max_ev,
                     transform_id=self._model.transform_id,
                     comp_matrix_id=self._model.comp_id,
                 )

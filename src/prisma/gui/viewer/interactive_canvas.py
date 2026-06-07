@@ -128,6 +128,35 @@ def _density_colors_fast(xd: np.ndarray, yd: np.ndarray, bins: int = 64) -> np.n
 
 
 # ---------------------------------------------------------------------------
+# Helper contour matplotlib — API unifiée 3.5-3.10+
+# ---------------------------------------------------------------------------
+
+def _iter_contour_collections(cs) -> list:
+    """
+    Retourne une liste d'objets itérables de chemins pour chaque niveau de contour.
+    Compatible matplotlib < 3.8 (cs.collections) ET ≥ 3.8 (cs.get_paths() par niveau).
+
+    Chaque élément de la liste retournée est lui-même une liste de path-like objects
+    avec un attribut .vertices (array Nx2).
+    """
+    # matplotlib ≥ 3.8 : plus de collections, allsegs = list[list[array]]
+    if hasattr(cs, "allsegs"):
+        # allsegs[i] = liste de segments pour le niveau i
+        # On wrappe chaque segment dans un objet duck-typing .vertices
+        class _FakePath:
+            def __init__(self, arr):
+                self.vertices = arr
+
+        return [[_FakePath(seg) for seg in segs] for segs in cs.allsegs]
+
+    # matplotlib < 3.8 : collections disponible
+    if hasattr(cs, "collections"):
+        return cs.collections
+
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Enum des modes interactifs
 # ---------------------------------------------------------------------------
 
@@ -961,15 +990,14 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         """
         Affiche un contour plot de densité style Kaluza (iso-courbes de densité).
 
-        Utilise numpy.histogram2d + scipy.ndimage pour les contours.
-        Fallback vers set_data_density si scipy absent.
+        Pipeline :
+          1. histogram2d sur toutes les données
+          2. gaussian_filter (scipy) pour lisser les pics
+          3. Une seule figure matplotlib pour extraire TOUS les chemins d'un coup
+          4. Rendu via pg.PlotDataItem par segment de contour
 
-        Args:
-            df:        DataFrame compensé+transformé.
-            x_channel: Canal X (Pnn).
-            y_channel: Canal Y (Pnn).
-            n_levels:  Nombre de courbes de niveau.
-            bins:      Résolution de la grille de densité.
+        Compatible matplotlib ≥ 3.8 (cs.get_paths() au lieu de cs.collections).
+        Fallback vers set_data_density si matplotlib absent.
         """
         if x_channel not in df.columns or y_channel not in df.columns:
             _logger.error("set_data_contour: canaux absents x='%s' y='%s'", x_channel, y_channel)
@@ -989,53 +1017,62 @@ class InteractiveGatingCanvas(pg.PlotWidget):
 
         h, xe, ye = np.histogram2d(xd, yd, bins=bins)
 
+        # Lissage gaussien pour des contours fluides
         try:
             from scipy.ndimage import gaussian_filter
             h_smooth = gaussian_filter(h.astype(np.float32), sigma=1.5)
         except ImportError:
             h_smooth = h.astype(np.float32)
 
-        # Normalisation log1p pour iso-niveaux perceptuels
+        # Normalisation log1p (révèle les populations rares)
         h_log = np.log1p(h_smooth)
         h_max = float(h_log.max()) or 1.0
-        h_norm = h_log / h_max  # [0, 1]
+        h_norm = (h_log / h_max).astype(np.float64)  # matplotlib exige float64
 
-        levels = np.linspace(0.05, 1.0, n_levels + 1)[:-1]  # exclut 0 (fond)
+        levels = np.linspace(0.05, 0.95, n_levels)
 
-        # Palette viridis-like : bleu→cyan→vert→jaune→rouge (n_levels couleurs)
-        cmap_t = np.linspace(0, 1, n_levels)
-        r_vals = np.clip((cmap_t * 2 - 0.5) * 255, 0, 255).astype(np.uint8)
-        g_vals = np.clip((1.0 - np.abs(cmap_t - 0.5) * 2) * 255, 0, 255).astype(np.uint8)
-        b_vals = np.clip((1.0 - cmap_t * 2) * 255, 0, 255).astype(np.uint8)
+        # Palette bleu→cyan→vert→jaune→rouge (n_levels couleurs)
+        cmap_t = np.linspace(0.0, 1.0, n_levels)
+        r_vals = np.clip((cmap_t * 2.0 - 0.5) * 255, 0, 255).astype(np.uint8)
+        g_vals = np.clip((1.0 - np.abs(cmap_t - 0.5) * 2.0) * 255, 0, 255).astype(np.uint8)
+        b_vals = np.clip((1.0 - cmap_t * 2.0) * 255, 0, 255).astype(np.uint8)
 
         x_centers = 0.5 * (xe[:-1] + xe[1:])
         y_centers = 0.5 * (ye[:-1] + ye[1:])
 
-        for i, level in enumerate(levels):
-            try:
-                from matplotlib.contour import QuadContourSet
-                import matplotlib.pyplot as _plt
-                # Utilise matplotlib pour extraire les contours, affiche via PyQtGraph
-                fig, ax = _plt.subplots()
-                cs = ax.contour(x_centers, y_centers, h_norm.T, levels=[level])
-                _plt.close(fig)
+        try:
+            import matplotlib
+            matplotlib.use("Agg")  # backend non-interactif — pas de fenêtre parasite
+            import matplotlib.pyplot as _plt
 
-                color = (int(r_vals[i]), int(g_vals[i]), int(b_vals[i]), 180)
-                pen = pg.mkPen(color=color, width=1.0)
+            # Une seule figure pour tous les niveaux → O(1) appels matplotlib
+            fig, ax = _plt.subplots()
+            cs = ax.contour(x_centers, y_centers, h_norm.T, levels=levels.tolist())
+            _plt.close(fig)
 
-                for path in cs.collections[0].get_paths():
-                    verts = path.vertices
-                    if len(verts) < 3:
+            # Itérer sur chaque niveau — API unifiée matplotlib 3.5-3.10+
+            for i, collection in enumerate(cs.collections if hasattr(cs, "collections")
+                                            else _iter_contour_collections(cs)):
+                color = (int(r_vals[i]), int(g_vals[i]), int(b_vals[i]), 200)
+                pen = pg.mkPen(color=color, width=1.2)
+                paths = (collection.get_paths() if hasattr(collection, "get_paths")
+                         else collection)
+                for path in paths:
+                    verts = path.vertices if hasattr(path, "vertices") else np.array(path)
+                    if len(verts) < 2:
                         continue
-                    item = pg.PlotDataItem(
-                        x=verts[:, 0].astype(np.float32),
-                        y=verts[:, 1].astype(np.float32),
-                        pen=pen,
-                    )
+                    # Fermer le contour visuellement
+                    xs = np.append(verts[:, 0], verts[0, 0]).astype(np.float32)
+                    ys = np.append(verts[:, 1], verts[0, 1]).astype(np.float32)
+                    item = pg.PlotDataItem(x=xs, y=ys, pen=pen)
                     self.addItem(item)
                     self._backgate_items.append(item)
-            except Exception as exc:
-                _logger.debug("Contour level %.2f ignoré : %s", level, exc)
+
+        except Exception as exc:
+            _logger.warning("set_data_contour matplotlib échoué (%s) — fallback density", exc)
+            # Fallback : density map classique
+            self.set_data_density(h, xe, ye)
+            return
 
         self.getPlotItem().setLabel("bottom", self._x_label or x_channel)
         self.getPlotItem().setLabel("left", self._y_label or y_channel)
