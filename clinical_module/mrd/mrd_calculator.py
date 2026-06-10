@@ -76,18 +76,17 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.prisma.exceptions import ClinicalMathError
-from src.prisma.utils.logger import get_logger
-
 # ARCH-1 : imports au niveau du module (évite les imports différés dans les fonctions)
 from clinical_module.phenotyping.blast_detection import (
     build_blast_weights,
-    score_nodes_for_blasts,
-    score_nodes_mahalanobis,
-    score_nodes_hybrid,
     categorize_blast_score,
     compute_reference_stats,
+    score_nodes_for_blasts,
+    score_nodes_hybrid,
+    score_nodes_mahalanobis,
 )
+from prisma.exceptions import ClinicalMathError
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("analysis.mrd_calculator")
 

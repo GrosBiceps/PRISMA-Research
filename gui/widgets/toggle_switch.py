@@ -8,9 +8,9 @@ Compatible avec le thème "Deep Medical Clarity".
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QWidget, QSizePolicy, QHBoxLayout, QLabel
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtProperty, pyqtSignal, QRect
-from PyQt5.QtGui import QPainter, QColor, QBrush, QPen
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, pyqtProperty, pyqtSignal
+from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 
 
 class ToggleSwitch(QWidget):

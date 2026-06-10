@@ -11,8 +11,6 @@ import warnings
 from pathlib import Path
 from typing import List, Optional
 
-import numpy as np
-
 try:
     import anndata as ad
 
@@ -29,8 +27,8 @@ except Exception as _flowsom_err:
     _FLOWSOM_AVAILABLE = False
     warnings.warn(f"flowsom non disponible ({type(_flowsom_err).__name__}: {_flowsom_err})")
 
-from src.prisma.core.models_legacy.sample import FlowSample
-from src.prisma.utils.logger import get_logger
+from prisma.core.models_legacy.sample import FlowSample
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("io.fcs_reader")
 

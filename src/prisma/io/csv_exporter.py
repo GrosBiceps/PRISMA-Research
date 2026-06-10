@@ -13,10 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("io.csv_exporter")
 
@@ -257,7 +256,6 @@ def extract_date_from_filename(filename: str) -> Optional[datetime]:
     fpath = Path(filename)
     if fpath.exists() and fpath.suffix.lower() == ".fcs":
         try:
-            import struct
 
             with open(fpath, "rb") as _f:
                 # En-tête FCS : bytes 10-17 = offset début TEXT, 18-25 = offset fin TEXT

@@ -14,7 +14,6 @@ nécessitent une résolution fine.
 from __future__ import annotations
 
 import logging
-import time
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,8 +22,8 @@ import numpy as np
 _logger = logging.getLogger("core.metaclustering")
 
 try:
-    from sklearn.metrics import silhouette_score, adjusted_rand_score
     from sklearn.cluster import AgglomerativeClustering
+    from sklearn.metrics import adjusted_rand_score, silhouette_score
 
     _SKLEARN_AVAILABLE = True
 except ImportError:
@@ -118,8 +117,8 @@ def phase2_bootstrap_stability(
         raise ImportError("scikit-learn requis pour phase2_bootstrap_stability")
 
     try:
-        import flowsom as fs
         import anndata as ad
+        import flowsom as fs
     except ImportError as exc:
         raise ImportError("flowsom requis pour phase2_bootstrap_stability") from exc
 
@@ -307,8 +306,8 @@ def find_optimal_clusters(
     # puis re-métaclustèré rapidement pour chaque k — pattern notebook de référence.
     if codebook is None:
         try:
-            import flowsom as fs
             import anndata as ad
+            import flowsom as fs
 
             n_cells = X.shape[0]
             # Sous-échantillon pour l'entraînement de référence (max 50k, quasi-instantané)
@@ -439,8 +438,8 @@ def find_optimal_clusters_with_scores(
     # ── Phase 0 : codebook de référence si non fourni ────────────────────────
     if codebook is None:
         try:
-            import flowsom as fs
             import anndata as ad
+            import flowsom as fs
 
             n_cells = X.shape[0]
             ref_size = min(50_000, n_cells)

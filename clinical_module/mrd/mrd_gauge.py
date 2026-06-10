@@ -14,17 +14,16 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Optional
 
+from PyQt5.QtCore import QPointF, QRectF, Qt
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen
 from PyQt5.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QSlider,
-    QFrame,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QFont, QColor, QPainter, QPen
-
 
 # Couleurs PRISMA v2
 _RED = "#FF3D6E"

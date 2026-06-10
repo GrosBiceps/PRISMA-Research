@@ -123,8 +123,8 @@ def build_tsne(
         )
 
     if _SKLEARN_TSNE_AVAILABLE:
-        from sklearn.manifold import TSNE as skTSNE
         import sklearn
+        from sklearn.manifold import TSNE as skTSNE
         logger.info("t-SNE backend: sklearn (fallback)")
         # sklearn ≥ 1.4 renomme n_iter → max_iter
         _sklearn_ver = tuple(int(x) for x in sklearn.__version__.split(".")[:2])

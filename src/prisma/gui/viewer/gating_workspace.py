@@ -15,61 +15,56 @@ Responsabilités :
 from __future__ import annotations
 
 import json
-import logging
-from pathlib import Path
 from enum import Enum, auto
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from PyQt5.QtCore import Qt, QModelIndex, QEvent, pyqtSignal
+from PyQt5.QtCore import QEvent, QModelIndex, Qt, pyqtSignal
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
-    QGroupBox,
+    QFrame,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QSpinBox,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
     QToolButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
-    QCheckBox,
-    QSizePolicy,
-    QFrame,
-    QInputDialog,
-    QSpinBox,
 )
-from PyQt5.QtGui import QFont
 
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
+
 from .gating_engine import (
-    PrismaFlowEngine,
     PrismaEngineError,
+    PrismaFlowEngine,
 )
-from .gating_tree_model import GatingTreeModel, GateNode
-from .plot_panel_model import PlotPanelModel, RenderMode, DensityCache
+from .gating_tree_model import GateNode
+from .plot_panel_model import DensityCache, PlotPanelModel, RenderMode
 from .population_tree_controller import PopulationTreeController
-from .statistics_dock import StatisticsDock
 from .statistics_controller import StatisticsController
+from .statistics_dock import StatisticsDock
 from .worksheet_layout import (
-    WorkspaceLayoutState,
     PanelState,
     WorksheetLayoutError,
+    WorkspaceLayoutState,
     validate_column_count,
-    save_layout_state,
-    load_layout_state,
 )
 
 try:
-    from .interactive_canvas import InteractiveGatingCanvas, DrawMode
+    from .interactive_canvas import DrawMode, InteractiveGatingCanvas
 
     _INTERACTIVE_CANVAS_AVAILABLE = True
 except Exception as exc:  # pragma: no cover - dépendance optionnelle
@@ -2392,7 +2387,7 @@ class PrismaGatingWorkspace(QWidget):
         if not path:
             return
         try:
-            from src.prisma.exports.gating_exporter import GatingExporter
+            from prisma.exports.gating_exporter import GatingExporter
 
             GatingExporter.export_statistics(self._engine, path)
             QMessageBox.information(self, "Export", f"Statistiques exportées :\n{path}")
@@ -2443,7 +2438,7 @@ class PrismaGatingWorkspace(QWidget):
             return
 
         try:
-            from src.prisma.exports.gating_exporter import GatingExporter
+            from prisma.exports.gating_exporter import GatingExporter
             GatingExporter.export_gated_fcs(
                 self._engine,
                 sample_id=self._current_sample_id(),

@@ -1,9 +1,8 @@
 import igraph as ig
 import numpy as np
+from flowsom.models.base_cluster_estimator import BaseClusterEstimator
 from scipy.spatial.distance import cdist, pdist, squareform
 from sklearn.utils.validation import check_is_fitted
-
-from flowsom.models.base_cluster_estimator import BaseClusterEstimator
 
 from . import SOM_Batch, map_data_to_codes
 

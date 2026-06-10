@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 import threading
 
-from PyQt5.QtCore import QCoreApplication, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QThread, QTimer, pyqtSignal
 
 _dbg = logging.getLogger("prisma.workers.debug")
 
@@ -229,8 +229,9 @@ class PipelineWorker(QThread):
         des tâches. Ce warmup s'exécute dans le QThread, hors thread principal.
         """
         try:
-            import numpy as _np
             import warnings as _w
+
+            import numpy as _np
 
             # Micro-SOM : 500 cellules × 4 marqueurs — assez pour déclencher le JIT,
             # trop petit pour durer plus de 2–3 s.
@@ -413,7 +414,6 @@ class SpiderPlotWorker(QThread):
 
     def run(self) -> None:
         try:
-            import matplotlib.pyplot as plt
             import numpy as np
             import pandas as pd
 
@@ -708,8 +708,8 @@ class FcsLoaderWorker(QThread):
         # ── Backend 2 : flowio + anndata ─────────────────────────────────
         if adata is None:
             try:
-                import flowio
                 import anndata as ad
+                import flowio
 
                 fcs_data = flowio.FlowData(fp)
                 events = np.reshape(fcs_data.events, (-1, fcs_data.channel_count))
@@ -737,8 +737,8 @@ class FcsLoaderWorker(QThread):
         # ── Backend 3 : fcsparser ─────────────────────────────────────────
         if adata is None:
             try:
-                import fcsparser
                 import anndata as ad
+                import fcsparser
 
                 for naming in ("$PnS", "$PnN"):
                     try:
@@ -777,9 +777,8 @@ class FcsLoaderWorker(QThread):
 
     def _read_fcs_binary(self, file_path: str):
         """Lecture binaire FCS brute — fallback ultime."""
-        import struct
-        import numpy as np
         import anndata as ad
+        import numpy as np
 
         with open(file_path, "rb") as f:
             header = f.read(58)

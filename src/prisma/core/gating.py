@@ -13,7 +13,7 @@ Pour le gating adaptatif par GMM, voir auto_gating.py.
 
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import numpy as np
 

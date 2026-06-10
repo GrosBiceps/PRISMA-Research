@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import logging
 import warnings
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -35,8 +35,8 @@ from prisma.strategies.base import ClusterParams
 logger = logging.getLogger(__name__)
 
 try:
-    from sklearn.metrics import silhouette_score, adjusted_rand_score
     from sklearn.cluster import AgglomerativeClustering, KMeans, MiniBatchKMeans
+    from sklearn.metrics import adjusted_rand_score, silhouette_score
     _SKLEARN_AVAILABLE = True
 except ImportError:
     _SKLEARN_AVAILABLE = False

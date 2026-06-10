@@ -4,17 +4,16 @@ import anndata as ad
 import igraph as ig
 import numpy as np
 import pandas as pd
+from flowsom.io import read_csv, read_FCS
+from flowsom.models.base_flowsom_estimator import BaseFlowSOMEstimator
+from flowsom.models.flowsom_estimator import FlowSOMEstimator
+from flowsom.tl import get_channels, get_markers
 from loguru import logger
 from mudata import MuData
 from scipy.sparse import issparse
 from scipy.spatial.distance import cdist
 from scipy.stats import median_abs_deviation
 from sklearn.base import check_is_fitted
-
-from flowsom.io import read_csv, read_FCS
-from flowsom.models.base_flowsom_estimator import BaseFlowSOMEstimator
-from flowsom.models.flowsom_estimator import FlowSOMEstimator
-from flowsom.tl import get_channels, get_markers
 
 
 class FlowSOM:

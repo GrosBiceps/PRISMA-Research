@@ -18,8 +18,7 @@ Méthodes disponibles (monolithe exact + apply() dispatcher):
 from __future__ import annotations
 
 import logging
-import warnings
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 
@@ -148,6 +147,7 @@ class DataTransformer:
             Données transformées (même shape que data).
         """
         import re
+
         import numpy as np
         try:
             from config.constants import SCATTER_PATTERNS

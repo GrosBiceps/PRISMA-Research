@@ -13,7 +13,6 @@ Retourne une liste de FlowSample prêts pour le clustering FlowSOM.
 
 from __future__ import annotations
 
-import warnings
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,18 +27,17 @@ except ImportError:
     _ANNDATA_AVAILABLE = False
 
 from config.pipeline_config import PipelineConfig
-from src.prisma.exceptions import TooFewCellsError, NaNDataError, GatingRejectedError, ProcessingError
-from src.prisma.core.models_legacy.sample import FlowSample
-from src.prisma.core.transformers import DataTransformer
-from src.prisma.core.normalizers import DataNormalizer
-from src.prisma.core.gating import PreGating
-from src.prisma.core.auto_gating import AutoGating
-from src.prisma.utils.logger import GatingLogger, get_logger
-from src.prisma.utils.marker_harmonizer import harmonize_marker_names
-from src.prisma.utils.validators import (
-    check_nan,
+from prisma.core.auto_gating import AutoGating
+from prisma.core.gating import PreGating
+from prisma.core.models_legacy.sample import FlowSample
+from prisma.core.normalizers import DataNormalizer
+from prisma.core.transformers import DataTransformer
+from prisma.exceptions import NaNDataError, TooFewCellsError
+from prisma.utils.logger import GatingLogger, get_logger
+from prisma.utils.marker_harmonizer import harmonize_marker_names
+from prisma.utils.validators import (
     check_min_cells,
-    check_no_fsc_ssc_in_analysis_markers,
+    check_nan,
 )
 
 _logger = get_logger("services.preprocessing")
@@ -449,7 +447,7 @@ def _safe_preprocess_sample(
     Les erreurs sont loggées comme avertissements — l'échantillon est ignoré
     sans bloquer le pipeline complet. ProcessingError et GatingError remontent.
     """
-    from src.prisma.exceptions import TooFewCellsError, NaNDataError
+    from prisma.exceptions import NaNDataError, TooFewCellsError
 
     try:
         return preprocess_sample(sample, config, gating_logger)
@@ -795,7 +793,7 @@ def preprocess_combined(
     gating_figures: Dict[str, Any] = {}
     if gating_plot_dir is not None and gate_masks:
         try:
-            from src.prisma.visualization.gating_plots import (
+            from prisma.visualization.gating_plots import (
                 generate_all_gating_plots,
             )
 
@@ -872,10 +870,10 @@ def preprocess_combined(
     # post-gating sans recalculer le KDE (rapide, pas de double-calcul).
     if gating_plot_dir is not None:
         try:
-            from src.prisma.visualization.gating_plots import (
+            from prisma.core.gating import PreGating as _PG
+            from prisma.visualization.gating_plots import (
                 plot_cd45_kde_qc as _plot_cd45_kde,
             )
-            from src.prisma.core.gating import PreGating as _PG
 
             _cd45_idx = _PG.find_marker_index(
                 var_names, ["CD45", "CD45-PECY5", "CD45-PC5"]
@@ -1085,7 +1083,7 @@ def _count_cd45_raw(
     Returns:
         Figure matplotlib ou None.
     """
-    from src.prisma.core.auto_gating import AutoGating
+    from prisma.core.auto_gating import AutoGating
 
     cd45_idx = PreGating.find_marker_index(
         var_names, ["CD45", "CD45-PECY5", "CD45-PC5"]

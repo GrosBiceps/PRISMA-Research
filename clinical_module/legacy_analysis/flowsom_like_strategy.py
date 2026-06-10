@@ -26,20 +26,21 @@ from __future__ import annotations
 
 import logging
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from prisma.analysis.downsampling import expand_to_full
 from prisma.core.models_legacy.sample import Sample
-from prisma.analysis.downsampling import random_downsample_df, expand_to_full
-from .strategies import BaseAnalysisStrategy, _DOWNSAMPLE_THRESHOLD
+
+from .strategies import _DOWNSAMPLE_THRESHOLD, BaseAnalysisStrategy
 
 logger = logging.getLogger(__name__)
 
 try:
-    from sklearn.metrics import silhouette_score, adjusted_rand_score
     from sklearn.cluster import AgglomerativeClustering, KMeans, MiniBatchKMeans
+    from sklearn.metrics import adjusted_rand_score, silhouette_score
     _SKLEARN_AVAILABLE = True
 except ImportError:
     _SKLEARN_AVAILABLE = False

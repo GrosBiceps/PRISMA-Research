@@ -18,12 +18,11 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from prisma.core.models_legacy.pipeline_result import ClusteringMetrics, PipelineResult
 from prisma.core.registry import StrategyRegistry
+from prisma.io.fcs_reader import get_fcs_files, load_fcs_files
+from prisma.io.fcs_writer import export_to_fcs_kaluza
 from prisma.strategies.base import ClusterParams, DimReducParams
-
-from src.prisma.io.fcs_reader import get_fcs_files, load_fcs_files
-from src.prisma.io.fcs_writer import export_to_fcs_kaluza
-from src.prisma.core.models_legacy.pipeline_result import ClusteringMetrics, PipelineResult
 
 log = logging.getLogger("prisma.research.executor")
 
@@ -434,7 +433,7 @@ class ResearchPipelineExecutor:
             raise FileNotFoundError(f"Workspace de gating introuvable: {workspace}")
 
         try:
-            from src.prisma.gui.viewer.gating_engine import PrismaEngineError, PrismaFlowEngine
+            from prisma.gui.viewer.gating_engine import PrismaEngineError, PrismaFlowEngine
         except Exception as exc:
             raise RuntimeError(
                 "FlowKit/PrismaFlowEngine indisponible: impossible de résoudre le contexte de gating."

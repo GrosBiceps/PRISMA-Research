@@ -9,7 +9,7 @@ sous forme d'un Spider Plot Plotly avec :
   - Z-scores normalisés, axe de -3.5 à +4.5
 
 Usage :
-    from src.prisma.visualization.mrd_radar import (
+    from prisma.visualization.mrd_radar import (
         plot_mrd_blast_radar_final,
     )
     fig = plot_mrd_blast_radar_final(
@@ -23,11 +23,11 @@ Usage :
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("visualization.mrd_radar")
 
@@ -402,7 +402,8 @@ if __name__ == "__main__":
     import sys
 
     # ── Simulation d'un MRDResult minimal ─────────────────────────────────────
-    from dataclasses import dataclass, field as dc_field
+    from dataclasses import dataclass
+    from dataclasses import field as dc_field
     from typing import List as L
 
     @dataclass

@@ -10,12 +10,13 @@ Fournit les fonctions de rendu de base pour tous les graphiques du pipeline:
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 
 try:
     import logging as _logging
+
     import matplotlib
 
     matplotlib.use("Agg")  # Backend non-interactif par défaut (compatible serveur)
@@ -31,9 +32,8 @@ try:
 
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.patches import Patch, Rectangle
     from matplotlib.ticker import FuncFormatter
-    from matplotlib.patches import Rectangle
-    from matplotlib.patches import Patch
 
     _MPL_AVAILABLE = True
 except ImportError:

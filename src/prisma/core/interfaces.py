@@ -15,18 +15,18 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 import numpy as np
 import pandas as pd
 
 # Imports des modèles canoniques — relatifs dans le package, absolus en fallback
 try:
-    from .models_legacy.sample import Sample
     from .models_legacy.experiment import Experiment
+    from .models_legacy.sample import Sample
 except ImportError:
-    from prisma.core.models_legacy.sample import Sample  # type: ignore[no-redef]
     from prisma.core.models_legacy.experiment import Experiment  # type: ignore[no-redef]
+    from prisma.core.models_legacy.sample import Sample  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 

@@ -24,12 +24,12 @@ except ImportError:
     warnings.warn("scipy requis pour les tests statistiques: pip install scipy")
 
 from config.constants import (
+    MRD_FOLD_CHANGE_THRESHOLD,
     MRD_LOD,
     MRD_LOQ,
     NBM_FREQ_MAX,
-    MRD_FOLD_CHANGE_THRESHOLD,
 )
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("analysis.statistics")
 

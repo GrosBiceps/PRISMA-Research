@@ -22,8 +22,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from prisma.core.registry import StrategyRegistry
 from prisma.core.gpu_context import GPUContext
+from prisma.core.registry import StrategyRegistry
 from prisma.strategies.base import DimReducParams
 
 logger = logging.getLogger(__name__)
@@ -159,7 +159,9 @@ class TSNEStrategy:
         logger.info(
             "[t-SNE] PyTorch CUDA kNN GPU + openTSNE layout — %d cellules", len(x)
         )
-        from openTSNE import affinity as _aff, initialization as _init, TSNEEmbedding
+        from openTSNE import TSNEEmbedding
+        from openTSNE import affinity as _aff
+        from openTSNE import initialization as _init
 
         k_aff = min(int(3 * p.perplexity) + 1, len(x) - 1)
 

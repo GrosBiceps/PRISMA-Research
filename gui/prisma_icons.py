@@ -15,7 +15,6 @@ from typing import Callable, Dict
 from PyQt5.QtCore import QPointF, QRectF, Qt
 from PyQt5.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
 
-
 _ICON_CACHE: Dict[str, QIcon] = {}
 
 # ── PRISMA channel palette ────────────────────────────────────────────────────

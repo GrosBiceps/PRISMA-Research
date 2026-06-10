@@ -15,8 +15,7 @@ from typing import Optional
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import QTimer
 
 log = logging.getLogger("prisma.gui.datashader_plot")
 

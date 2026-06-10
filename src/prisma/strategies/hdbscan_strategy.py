@@ -22,8 +22,8 @@ import logging
 
 import numpy as np
 
-from prisma.core.registry import StrategyRegistry
 from prisma.core.gpu_context import GPUContext
+from prisma.core.registry import StrategyRegistry
 from prisma.strategies.base import ClusterParams
 
 logger = logging.getLogger(__name__)

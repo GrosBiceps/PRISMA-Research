@@ -12,10 +12,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import uuid4
 
-import numpy as np
 import pandas as pd
 
-from .sample import Sample, SampleValidationError
+from .sample import Sample
 
 
 class ExperimentError(ValueError):

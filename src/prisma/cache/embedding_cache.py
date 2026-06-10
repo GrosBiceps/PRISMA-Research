@@ -14,7 +14,7 @@ import lzma
 import pickle
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import numpy as np
 

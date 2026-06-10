@@ -7,7 +7,7 @@ consommables par les widgets UI sans couplage direct au domaine.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 def adapt_mrd_result(result: Any, method_used: str = "all") -> Dict[str, Any]:

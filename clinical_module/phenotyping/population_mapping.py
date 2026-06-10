@@ -36,7 +36,8 @@ import numpy as np
 import pandas as pd
 
 try:
-    from scipy.spatial.distance import cdist, cosine as cosine_dist
+    from scipy.spatial.distance import cdist
+    from scipy.spatial.distance import cosine as cosine_dist
 
     _SCIPY_AVAILABLE = True
 except ImportError:
@@ -64,7 +65,7 @@ try:
 except ImportError:
     _PYTOMETRY_AVAILABLE = False
 
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("analysis.population_mapping")
 
@@ -1303,7 +1304,7 @@ def _mahalanobis_distance_batch(
         cov_sub = cov[:n_c, :n_c].copy()
 
         try:
-            from scipy.linalg import inv as _inv, LinAlgError
+            from scipy.linalg import inv as _inv
 
             inv_cov = _inv(cov_sub)
         except Exception:

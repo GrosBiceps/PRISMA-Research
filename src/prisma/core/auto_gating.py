@@ -29,19 +29,17 @@ import numpy as np
 _logger = logging.getLogger("core.auto_gating")
 _rng = np.random.default_rng(seed=42)
 
-from .models_legacy.gate_result import (
-    GateResult,
-    gating_reports,
-    gating_log_entries,
-    log_gating_event,
-)
-from .gating import PreGating
 from config.constants import (
     GMM_MAX_SAMPLES,
-    RANSAC_R2_THRESHOLD,
     RANSAC_MAD_FACTOR,
 )
 
+from .gating import PreGating
+from .models_legacy.gate_result import (
+    GateResult,
+    gating_reports,
+    log_gating_event,
+)
 
 # =============================================================================
 # CLASSE AutoGating — Gating adaptatif par GMM/KDE
@@ -102,7 +100,7 @@ class GatingSession:
 
 # Instance par défaut — maintient la rétrocompatibilité avec les imports
 # existants dans pipeline_executor.py qui font :
-#   from src.prisma.core.auto_gating import ransac_scatter_data, ...
+#   from prisma.core.auto_gating import ransac_scatter_data, ...
 _default_session: GatingSession = GatingSession()
 ransac_scatter_data: Dict[str, Any] = _default_session.ransac_scatter_data
 singlets_summary_per_file: List[Dict[str, Any]] = _default_session.singlets_summary_per_file
@@ -575,9 +573,10 @@ class AutoGating:
         import matplotlib
 
         matplotlib.use("Agg")
+        import os
+
         import matplotlib.pyplot as plt
         from scipy.stats import gaussian_kde as scipy_kde
-        import os
 
         colors = ["#4cc9f0", "#f72585", "#7209b7", "#3a0ca3", "#4361ee"]
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -735,8 +734,7 @@ class AutoGating:
         _session = session if session is not None else _default_session
         _ransac_scatter = _session.ransac_scatter_data
         _singlets_summary = _session.singlets_summary_per_file
-        from sklearn.linear_model import RANSACRegressor
-        from sklearn.linear_model import LinearRegression
+        from sklearn.linear_model import LinearRegression, RANSACRegressor
         from sklearn.metrics import r2_score
 
         n_cells = X.shape[0]
@@ -1165,8 +1163,8 @@ class AutoGating:
             threshold: Seuil de séparation CD45- / CD45+ dans l'espace transformé
             method_used: Nom de la méthode utilisée ("kde_pied_pic" ou "otsu_log")
         """
-        from scipy.stats import gaussian_kde
         from scipy.ndimage import gaussian_filter1d
+        from scipy.stats import gaussian_kde
 
         # Sous-échantillonnage strict : gaussian_kde est O(N²) — 3M pts → 3m33s
         _KDE_MAX = max(1000, int(max_samples))
@@ -1612,7 +1610,7 @@ class AutoGating:
         mask_kde = np.zeros(n_cells, dtype=bool)
         threshold_kde = 0.0
         try:
-            from src.prisma.analysis.prescreening import gate_cd34_kde
+            from prisma.analysis.prescreening import gate_cd34_kde
 
             # Reconstruit un masque valide sur l'ensemble (n_cells) pointant
             # uniquement les cellules CD45dim valides.

@@ -36,43 +36,41 @@ _logger = logging.getLogger("prisma.main_window")
 
 if TYPE_CHECKING:
     from config.pipeline_config import PipelineConfig
-    from src.prisma.core.models_legacy.pipeline_result import PipelineResult
+    from prisma.core.models_legacy.pipeline_result import PipelineResult
 
+from PyQt5.QtCore import QByteArray, QSize, Qt
+from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase, QIcon
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QApplication,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QFileDialog,
-    QGroupBox,
-    QSpinBox,
-    QDoubleSpinBox,
     QCheckBox,
     QComboBox,
-    QProgressBar,
-    QStatusBar,
-    QMessageBox,
-    QTabWidget,
-    QScrollArea,
+    QDoubleSpinBox,
+    QFileDialog,
     QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
     QSplitter,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
-    QHeaderView,
-    QGridLayout,
+    QTabWidget,
     QTextEdit,
-    QSizePolicy,
-    QListWidget,
-    QListWidgetItem,
-    QAbstractItemView,
-    QLineEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt5.QtCore import Qt, QSize, QMimeData, QUrl, QByteArray
-from PyQt5.QtGui import QFont, QColor, QDragEnterEvent, QDropEvent, QIcon, QFontDatabase, QFontInfo
 
 try:
     from PyQt5.QtSvg import QSvgWidget
@@ -81,15 +79,15 @@ try:
 except ImportError:
     _SVG_AVAILABLE = False
 
+import matplotlib
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-import matplotlib
 
 matplotlib.use("Qt5Agg")
 
-from gui.styles import STYLESHEET, COLORS
 from gui.prisma_icons import get_prisma_icon
+from gui.styles import COLORS, STYLESHEET
 
 
 def _asset_path(filename: str) -> Path:
@@ -114,12 +112,11 @@ def _register_embedded_fonts() -> None:
         QFontDatabase.addApplicationFont(str(font_path))
 
 
-from gui.workers import PipelineWorker, SpiderPlotWorker, FcsLoaderWorker
 from gui.tabs.home_tab import HomeTab
 from gui.widgets.log_console import LogConsole
-from gui.widgets.toggle_switch import ToggleSwitch
-from gui.widgets.settings_card import SettingsCard
 from gui.widgets.parameter_tabs import ParameterDashboard
+from gui.widgets.toggle_switch import ToggleSwitch
+from gui.workers import FcsLoaderWorker, PipelineWorker, SpiderPlotWorker
 
 # qtawesome — icônes vectorielles Font Awesome 5
 try:
@@ -262,14 +259,13 @@ def _robust_limits(
 # ClusterItemDelegate — Pastille couleur + boutons ✓/✗ inline
 # ══════════════════════════════════════════════════════════════════════
 
+from PyQt5.QtCore import QPoint, QRect
+from PyQt5.QtCore import pyqtSignal as _pyqtSignal
+from PyQt5.QtGui import QPainter, QPen
 from PyQt5.QtWidgets import (
-    QStyledItemDelegate,
-    QStyleOptionButton,
     QStyle,
-    QApplication as _QApplication,
+    QStyledItemDelegate,
 )
-from PyQt5.QtCore import QRect, QPoint, pyqtSignal as _pyqtSignal
-from PyQt5.QtGui import QPainter, QPen, QBrush as _QBrush
 
 _CL_COLOR_ROLE = Qt.UserRole + 1  # QColor de la pastille du cluster
 _CL_STATUS_ROLE = Qt.UserRole + 2  # "approved" | "rejected" | None
@@ -2315,8 +2311,8 @@ class FlowSomAnalyzerPro(QMainWindow):
         )
         clusters_mode_layout.addWidget(_lbl_dot)
 
-        from PyQt5.QtWidgets import QSlider
         from PyQt5.QtCore import Qt as _Qt
+        from PyQt5.QtWidgets import QSlider
 
         self._cluster_point_size: int = 6  # valeur par défaut (matplotlib s=)
         self.slider_cluster_pts = QSlider(_Qt.Horizontal)
@@ -3112,7 +3108,7 @@ class FlowSomAnalyzerPro(QMainWindow):
 
     def _open_preview_dialog(self) -> None:
         """Ouvre une fenêtre modale avec la liste complète des fichiers FCS."""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton
+        from PyQt5.QtWidgets import QDialog, QHBoxLayout, QPushButton, QVBoxLayout
 
         folder_conditions = []
         if self.drop_healthy.path and Path(self.drop_healthy.path).is_dir():
@@ -3243,15 +3239,19 @@ class FlowSomAnalyzerPro(QMainWindow):
     def _open_rename_dialog(self) -> None:
         """Ouvre l'éditeur complet de renommage des colonnes FCS."""
         import re
+
+        from PyQt5.QtWidgets import (
+            QComboBox as _QCombo,
+        )
         from PyQt5.QtWidgets import (
             QDialog,
-            QVBoxLayout,
             QHBoxLayout,
             QPushButton,
-            QLabel as _QL,
             QTabWidget,
-            QComboBox as _QCombo,
-            QGroupBox,
+            QVBoxLayout,
+        )
+        from PyQt5.QtWidgets import (
+            QLabel as _QL,
         )
 
         dlg = QDialog(self)
@@ -4270,6 +4270,7 @@ class FlowSomAnalyzerPro(QMainWindow):
     def _populate_results(self, result: Any) -> None:
         try:
             import platform
+
             import psutil
 
             lines = []
@@ -4297,7 +4298,6 @@ class FlowSomAnalyzerPro(QMainWindow):
 
             df = getattr(result, "data", None)
             if df is not None and "condition" in df.columns:
-                import numpy as np
 
                 mask_patho = (
                     df["condition"].str.lower().str.contains("patho|pathologique", na=False)
@@ -4399,15 +4399,13 @@ class FlowSomAnalyzerPro(QMainWindow):
             lines.append("═" * 64)
             self.txt_summary.setPlainText("\n".join(lines))
             self.txt_summary.setMaximumHeight(16777215)  # libère la hauteur
-        except Exception as exc:
+        except Exception:
             try:
                 self.txt_summary.setPlainText(result.summary())
             except Exception:
                 self.txt_summary.setPlainText(f"Cellules : {result.n_cells:,}")
 
         try:
-            import pandas as pd
-            import numpy as np
 
             df = result.data
             if df is None:
@@ -4458,7 +4456,6 @@ class FlowSomAnalyzerPro(QMainWindow):
         if not path:
             return
         try:
-            import numpy as np
 
             df = self._result.data
             lines = [
@@ -4983,7 +4980,6 @@ class FlowSomAnalyzerPro(QMainWindow):
 
     def _sort_cluster_table(self, sort_index: int) -> None:
         """Tri de la liste clusters via tri logique sur les UserRole stockés."""
-        import numpy as np
 
         current_cl_id = self._get_selected_cluster_id()
         n = self.cluster_table.rowCount()
@@ -5999,8 +5995,9 @@ class FlowSomAnalyzerPro(QMainWindow):
             except ImportError:
                 self._log(f"{log_prefix} fcswrite non installé : tentative via export_to_fcs.")
                 try:
-                    import pandas as pd
                     from io.fcs_writer import export_to_fcs
+
+                    import pandas as pd
 
                     target_path = Path(fcs_path)
                     tmp_path = str(target_path.with_name(target_path.stem + ".tmp_patch.fcs"))
@@ -6016,8 +6013,9 @@ class FlowSomAnalyzerPro(QMainWindow):
             except Exception as _write_e:
                 self._log(f"{log_prefix} écriture fcswrite échouée : {_write_e}")
                 try:
-                    import pandas as pd
                     from io.fcs_writer import export_to_fcs
+
+                    import pandas as pd
 
                     target_path = Path(fcs_path)
                     tmp_path = str(target_path.with_name(target_path.stem + ".tmp_patch.fcs"))
@@ -6242,6 +6240,7 @@ class FlowSomAnalyzerPro(QMainWindow):
 
     def _read_fcs_binary(self, file_path: str) -> Any:
         import struct
+
         import numpy as np
 
         try:
@@ -6488,6 +6487,7 @@ class FlowSomAnalyzerPro(QMainWindow):
     def _apply_logicle_to_adata(self, adata_raw: Any) -> Any:
         """Retourne un adata avec la transformation logicle appliquée à la volée sur tous les canaux."""
         import copy as _copy
+
         import numpy as np
 
         try:
@@ -6511,6 +6511,7 @@ class FlowSomAnalyzerPro(QMainWindow):
     def _apply_log10_to_adata(self, adata_raw: Any) -> Any:
         """Retourne un adata avec log10(x+1) appliqué à la volée sur tous les canaux."""
         import copy as _copy
+
         import numpy as np
 
         X_raw = adata_raw.X
@@ -6565,9 +6566,9 @@ class FlowSomAnalyzerPro(QMainWindow):
     def _update_fcs_plot(self) -> None:
         if self.current_fcs_adata is None:
             return
-        import numpy as np
-        import matplotlib.pyplot as plt
         import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
+        import numpy as np
 
         # Limite absolue de sécurité — évite le gel de l'UI même en mode "tout afficher"
         _MAX_SAFE_SCATTER = 200_000

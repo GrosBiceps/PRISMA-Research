@@ -13,10 +13,11 @@ Workflow :
 
 from __future__ import annotations
 
-import numpy as np
-import h5py
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
+
+import h5py
+import numpy as np
 
 if TYPE_CHECKING:
     from prisma.core.models import Sample

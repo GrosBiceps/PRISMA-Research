@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, Optional
 
 import pandas as pd
 
-from src.prisma.exports.heatmaps import save_cluster_heatmap
+from prisma.exports.heatmaps import save_cluster_heatmap
 
 logger = logging.getLogger(__name__)
 

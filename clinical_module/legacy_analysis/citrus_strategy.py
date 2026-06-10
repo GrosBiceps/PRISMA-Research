@@ -16,7 +16,6 @@ Référence: Bruggner RV et al., PNAS 2014.
 from __future__ import annotations
 
 import logging
-import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -24,7 +23,7 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist
-from sklearn.linear_model import ElasticNetCV, LassoCV, LogisticRegressionCV
+from sklearn.linear_model import LassoCV, LogisticRegressionCV
 from sklearn.preprocessing import StandardScaler
 
 from prisma.core.models_legacy.experiment import Experiment

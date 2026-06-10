@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import time
-import json
 import hashlib
+import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -27,44 +27,43 @@ import numpy as np
 import pandas as pd
 
 try:
-    from joblib import dump as _joblib_dump, load as _joblib_load
+    from joblib import dump as _joblib_dump
+    from joblib import load as _joblib_load
 
     _JOBLIB_AVAILABLE = True
 except ImportError:
     _JOBLIB_AVAILABLE = False
 
 from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
-from flowsom_pipeline_pro.src.prisma.core.models_legacy.sample import FlowSample
-from flowsom_pipeline_pro.src.prisma.core.models_legacy.pipeline_result import (
-    PipelineResult,
-    ClusteringMetrics,
-)
-from flowsom_pipeline_pro.src.prisma.io.fcs_reader import get_fcs_files, load_as_flow_samples
-from flowsom_pipeline_pro.src.prisma.core.clustering import FlowSOMClusterer
-from flowsom_pipeline_pro.src.prisma.services.preprocessing_service import (
-    preprocess_all_samples,
-    preprocess_combined,
-)
-from flowsom_pipeline_pro.src.prisma.services.clustering_service import (
-    run_clustering,
-    build_cells_dataframe,
-    stack_samples,
-    stack_raw_markers,
-)
-from flowsom_pipeline_pro.src.prisma.services.export_service import ExportService
-from flowsom_pipeline_pro.src.prisma.utils.logger import GatingEvent, GatingLogger, get_logger
-from flowsom_pipeline_pro.src.prisma.core.models_legacy.gate_result import (
-    gating_reports,
-    gating_log_entries,
-)
 from flowsom_pipeline_pro.src.prisma.core.auto_gating import (
     ransac_scatter_data,
     singlets_summary_per_file,
 )
+from flowsom_pipeline_pro.src.prisma.core.clustering import FlowSOMClusterer
+from flowsom_pipeline_pro.src.prisma.core.models_legacy.gate_result import (
+    gating_log_entries,
+    gating_reports,
+)
+from flowsom_pipeline_pro.src.prisma.core.models_legacy.pipeline_result import (
+    ClusteringMetrics,
+    PipelineResult,
+)
+from flowsom_pipeline_pro.src.prisma.core.models_legacy.sample import FlowSample
+from flowsom_pipeline_pro.src.prisma.io.fcs_reader import get_fcs_files, load_as_flow_samples
 from flowsom_pipeline_pro.src.prisma.pipeline.plotting_worker import (
     PlottingTask,
     PlottingWorker,
 )
+from flowsom_pipeline_pro.src.prisma.services.clustering_service import (
+    build_cells_dataframe,
+    run_clustering,
+    stack_raw_markers,
+)
+from flowsom_pipeline_pro.src.prisma.services.export_service import ExportService
+from flowsom_pipeline_pro.src.prisma.services.preprocessing_service import (
+    preprocess_combined,
+)
+from flowsom_pipeline_pro.src.prisma.utils.logger import GatingEvent, GatingLogger, get_logger
 
 _logger = get_logger("pipeline.executor")
 
@@ -677,8 +676,8 @@ class FlowSOMPipeline:
             import matplotlib
 
             matplotlib.use("Agg")
-            import matplotlib.pyplot as _plt_warmup
             import matplotlib.font_manager as _fm
+            import matplotlib.pyplot as _plt_warmup
 
             # Forcer le chargement du FontManager en mémoire
             _ = _fm.fontManager.ttflist
@@ -1513,8 +1512,8 @@ class FlowSOMPipeline:
             mrd_result = None
             try:
                 from flowsom_pipeline_pro.src.analysis.mrd_calculator import (
-                    load_mrd_config,
                     compute_mrd,
+                    load_mrd_config,
                 )
 
                 _mrd_config_path = getattr(config, "_extra", {}).get("mrd_config_path") or None
@@ -1760,9 +1759,6 @@ class FlowSOMPipeline:
                         try:
                             from flowsom_pipeline_pro.src.prisma.visualization.gating_plots import (
                                 plot_cd45_kde_qc as _plot_cd45_kde_mrd,
-                            )
-                            from flowsom_pipeline_pro.src.prisma.core.gating import (
-                                PreGating as _PG_mrd,
                             )
 
                             _cd45_col_name = next(
@@ -2208,10 +2204,12 @@ class FlowSOMPipeline:
             if _citrus_cfg is not None and getattr(_citrus_cfg, "enabled", False):
                 try:
                     from flowsom_pipeline_pro.src.analysis.citrus_strategy import (
-                        CitrusStrategy,
                         CitrusParams,
+                        CitrusStrategy,
                     )
-                    from flowsom_pipeline_pro.src.prisma.core.models_legacy.experiment import Experiment
+                    from flowsom_pipeline_pro.src.prisma.core.models_legacy.experiment import (
+                        Experiment,
+                    )
                     from flowsom_pipeline_pro.src.prisma.core.models_legacy.sample import Sample
 
                     _logger.info("Citrus: démarrage analyse stratifiante...")
@@ -2443,7 +2441,6 @@ class FlowSOMPipeline:
         Returns:
             DataFrame avec toutes les colonnes numériques prêtes pour fcswrite.
         """
-        from flowsom_pipeline_pro.src.prisma.core.clustering import FlowSOMClusterer as _FSC
 
         # ── 1. Données brutes (toutes colonnes) ───────────────────────────────
         X_raw, raw_var_names, obs = stack_raw_markers(processed_samples)

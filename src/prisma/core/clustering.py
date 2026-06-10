@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 import os
 import warnings
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -41,7 +40,7 @@ except ImportError:
     warnings.warn("flowsom non installé: pip install flowsom")
 
 try:
-    from src.prisma.core.flowsom_gpu.models import GPUFlowSOMEstimator
+    from prisma.core.flowsom_gpu.models import GPUFlowSOMEstimator
     _GPU_AVAILABLE = True
 except ImportError as _gpu_import_err:
     _GPU_AVAILABLE = False
@@ -343,8 +342,8 @@ class FlowSOMClusterer:
         Returns:
             Array float (n_nodes, 2) — coordonnées x/y du layout MST.
         """
-        from scipy.spatial.distance import cdist
         import igraph as ig
+        from scipy.spatial.distance import cdist
 
         adjacency = cdist(codebook, codebook, metric="euclidean")
         full_graph = ig.Graph.Weighted_Adjacency(
@@ -637,8 +636,8 @@ class FlowSOMClusterer:
 # ─────────────────────────────────────────────────────────────────────────────
 
 try:
-    from sklearn.metrics import silhouette_score
     from sklearn.cluster import AgglomerativeClustering
+    from sklearn.metrics import silhouette_score
 
     _SKLEARN_AVAILABLE = True
 except ImportError:

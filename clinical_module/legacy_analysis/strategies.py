@@ -19,15 +19,16 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 import numpy as np
 
-from prisma.core.models_legacy.sample import Sample
+from prisma.analysis.downsampling import expand_to_full, random_downsample_df
 from prisma.core.models_legacy.experiment import Experiment
-from .backends import build_umap, build_tsne
-from prisma.analysis.downsampling import random_downsample_df, expand_to_full
+from prisma.core.models_legacy.sample import Sample
+
+from .backends import build_tsne, build_umap
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +490,7 @@ class FlowSOMStrategy(BaseAnalysisStrategy):
         gate_idx: Optional[np.ndarray],
         p: FlowSOMStrategyParams,
     ) -> Sample:
-        from sklearn.cluster import MiniBatchKMeans, AgglomerativeClustering
+        from sklearn.cluster import MiniBatchKMeans
 
         n_nodes = p.xdim * p.ydim
         n_cells, n_feat = data.shape

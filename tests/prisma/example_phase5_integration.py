@@ -26,7 +26,7 @@ def run_example(fcs_folder: str) -> None:
     5. Sauvegarde JSON
     6. Rechargement JSON
     """
-    from src.prisma.gui.viewer.gating_workspace import PrismaGatingWorkspace
+    from prisma.gui.viewer.gating_workspace import PrismaGatingWorkspace
 
     app = QApplication.instance() or QApplication(sys.argv)
 

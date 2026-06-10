@@ -18,9 +18,8 @@ from typing import Any, List, Optional
 
 import numpy as np
 import pandas as pd
-
-from models.sample import Sample
 from analysis.strategies import BaseAnalysisStrategy
+from models.sample import Sample
 
 logger = logging.getLogger(__name__)
 

@@ -16,9 +16,9 @@ import numpy as np
 import pandas as pd
 
 try:
-    import matplotlib.pyplot as plt
     import matplotlib.colors as mcolors
     import matplotlib.figure as _mpl_figure
+    import matplotlib.pyplot as plt
 
     _MPL_AVAILABLE = True
 except ImportError:
@@ -31,14 +31,13 @@ try:
 except ImportError:
     _SNS_AVAILABLE = False
 
-from src.prisma.visualization.plot_helpers import (
+from prisma.utils.logger import get_logger
+from prisma.visualization.plot_helpers import (
     BG_COLOR,
-    TEXT_COLOR,
     SPINE_COLOR,
-    apply_dark_style,
+    TEXT_COLOR,
     save_figure,
 )
-from src.prisma.utils.logger import get_logger
 
 _logger = get_logger("visualization.flowsom_plots")
 
@@ -520,11 +519,11 @@ def plot_mst_plotly(
         Figure Plotly ou None.
     """
     try:
-        import plotly.graph_objects as go
         import plotly.express as px
-        from scipy.spatial.distance import cdist
-        from scipy.sparse.csgraph import minimum_spanning_tree
+        import plotly.graph_objects as go
         from scipy.sparse import csr_matrix
+        from scipy.sparse.csgraph import minimum_spanning_tree
+        from scipy.spatial.distance import cdist
     except ImportError:
         _logger.warning("plotly / scipy requis pour plot_mst_plotly")
         return None
@@ -599,9 +598,9 @@ def plot_mst_plotly(
                     except Exception:
                         pass
             if codebook is not None:
-                from scipy.spatial.distance import cdist
-                from scipy.sparse.csgraph import minimum_spanning_tree
                 from scipy.sparse import csr_matrix
+                from scipy.sparse.csgraph import minimum_spanning_tree
+                from scipy.spatial.distance import cdist
 
                 dist_mat = cdist(codebook, codebook, metric="euclidean")
                 mst_sparse = minimum_spanning_tree(csr_matrix(dist_mat))
@@ -759,8 +758,8 @@ def plot_som_grid_plotly(
         Figure Plotly ou None.
     """
     try:
-        import plotly.graph_objects as go
         import plotly.express as px
+        import plotly.graph_objects as go
     except ImportError:
         _logger.warning("plotly requis pour plot_som_grid_plotly")
         return None
@@ -1633,8 +1632,8 @@ def plot_metacluster_radar(
         ``plotly.graph_objects.Figure`` ou None si plotly absent.
     """
     try:
-        import plotly.graph_objects as go
         import plotly.colors as pc
+        import plotly.graph_objects as go
     except ImportError:
         _logger.warning("plotly requis pour plot_metacluster_radar")
         return None
@@ -1774,8 +1773,8 @@ def plot_cluster_radar(
         ``plotly.graph_objects.Figure`` ou None si plotly absent.
     """
     try:
-        import plotly.graph_objects as go
         import plotly.colors as pc
+        import plotly.graph_objects as go
     except ImportError:
         _logger.warning("plotly requis pour plot_cluster_radar")
         return None
@@ -1923,8 +1922,8 @@ def plot_cluster_radar_mrd(
         ``plotly.graph_objects.Figure`` ou None.
     """
     try:
-        import plotly.graph_objects as go
         import plotly.colors as pc
+        import plotly.graph_objects as go
     except ImportError:
         _logger.warning("plotly requis pour plot_cluster_radar_mrd")
         return None
@@ -2268,7 +2267,7 @@ def plot_patho_pct_per_cluster(
             out_jpg = Path(output_jpg)
             out_jpg.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from src.prisma.utils.kaleido_scope import write_image_fast
+                from prisma.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_jpg, fmt="jpg", width=1400, height=620, scale=2)
                 _logger.info("Patho%% par cluster (JPG) sauvegardé: %s", out_jpg.name)
             except Exception as _img_err:
@@ -2429,7 +2428,7 @@ def plot_cells_pct_per_cluster(
             out_jpg = Path(output_jpg)
             out_jpg.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from src.prisma.utils.kaleido_scope import write_image_fast
+                from prisma.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_jpg, fmt="jpg", width=1400, height=620, scale=2)
                 _logger.info(
                     "%%Cellules par cluster (JPG) sauvegardé: %s", out_jpg.name
@@ -2596,7 +2595,7 @@ def plot_patho_pct_per_som_node(
             out_jpg = Path(output_jpg)
             out_jpg.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from src.prisma.utils.kaleido_scope import write_image_fast
+                from prisma.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_jpg, fmt="jpg", width=max(1800, n_nodes * 22), height=680, scale=2)
                 _logger.info("Patho%% par nœud SOM (JPG) sauvegardé: %s", out_jpg.name)
             except Exception as _img_err:
@@ -2762,7 +2761,7 @@ def plot_cells_pct_per_som_node(
             out_jpg = Path(output_jpg)
             out_jpg.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from src.prisma.utils.kaleido_scope import write_image_fast
+                from prisma.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_jpg, fmt="jpg", width=max(1800, n_nodes * 22), height=680, scale=2)
                 _logger.info(
                     "%%Cellules par nœud SOM (JPG) sauvegardé: %s", out_jpg.name
@@ -3387,7 +3386,7 @@ def plot_mrd_summary(
             out_png = Path(output_png)
             out_png.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from src.prisma.utils.kaleido_scope import write_image_fast
+                from prisma.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_png, fmt="png", width=1800, height=950, scale=2)
                 _logger.info("MRD summary (PNG): %s", out_png.name)
             except Exception as _img_err:
@@ -3726,7 +3725,7 @@ def plot_blast_mrd_classification(
             out_png = Path(output_png)
             out_png.parent.mkdir(parents=True, exist_ok=True)
             try:
-                from src.prisma.utils.kaleido_scope import write_image_fast
+                from prisma.utils.kaleido_scope import write_image_fast
                 write_image_fast(fig, out_png, fmt="png", width=1800, height=900, scale=2)
                 _logger.info("Blast MRD classification (PNG): %s", out_png.name)
             except Exception as _img_err:

@@ -15,17 +15,15 @@ Hiérarchie :
 
 from __future__ import annotations
 
-import uuid
 from typing import Callable, List, Optional, Tuple
 
-from PyQt5.QtCore import QPointF, Qt
+from PyQt5.QtCore import QPointF
 from PyQt5.QtGui import QBrush, QColor, QPen, QPolygonF
 from PyQt5.QtWidgets import (
     QGraphicsItem,
     QGraphicsPolygonItem,
     QGraphicsTextItem,
 )
-
 
 # ---------------------------------------------------------------------------
 # Interface commune

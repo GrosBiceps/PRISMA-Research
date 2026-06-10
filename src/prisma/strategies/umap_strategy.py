@@ -17,13 +17,12 @@ Stratégie PyTorch (backend 2) :
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict
+from dataclasses import dataclass
 
 import numpy as np
 
-from prisma.core.registry import StrategyRegistry
 from prisma.core.gpu_context import GPUContext
+from prisma.core.registry import StrategyRegistry
 from prisma.strategies.base import DimReducParams
 
 logger = logging.getLogger(__name__)

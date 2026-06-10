@@ -235,9 +235,9 @@ def gate_cd34_kde(
         return np.zeros(n_cells, dtype=bool), 0.0, np.array([]), np.array([]), warnings_out
 
     try:
-        from scipy.stats import gaussian_kde
         from scipy.ndimage import gaussian_filter1d
         from scipy.signal import find_peaks
+        from scipy.stats import gaussian_kde
 
         # Sous-échantillonnage
         if len(cd34_valid) > max_samples:

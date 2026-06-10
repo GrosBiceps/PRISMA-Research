@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import platform
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,7 +17,6 @@ from uuid import uuid4
 
 import numpy as np
 import pandas as pd
-
 
 # ---------------------------------------------------------------------------
 # Sample

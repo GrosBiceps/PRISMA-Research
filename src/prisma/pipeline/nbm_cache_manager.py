@@ -31,14 +31,11 @@ Usage dans BatchPipeline :
 from __future__ import annotations
 
 import dataclasses
-import gc
 import hashlib
 import json
-import logging
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-import numpy as np
 import pandas as pd
 
 try:
@@ -49,14 +46,15 @@ except ImportError:
     _PARQUET_AVAILABLE = False
 
 try:
-    from joblib import dump as _jdump, load as _jload
+    from joblib import dump as _jdump
+    from joblib import load as _jload
     _JOBLIB_AVAILABLE = True
 except ImportError:
     _JOBLIB_AVAILABLE = False
 
 from config.pipeline_config import PipelineConfig
-from src.prisma.core.models_legacy.sample import FlowSample
-from src.prisma.utils.logger import get_logger
+from prisma.core.models_legacy.sample import FlowSample
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("pipeline.nbm_cache")
 

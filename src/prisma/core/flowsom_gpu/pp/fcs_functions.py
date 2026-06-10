@@ -4,7 +4,6 @@ import random
 
 import anndata as ad
 import numpy as np
-
 from flowsom.io import read_FCS
 from flowsom.tl import get_markers
 

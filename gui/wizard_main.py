@@ -21,23 +21,19 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PyQt5.QtCore import QByteArray, QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QFontDatabase, QIcon
+from PyQt5.QtCore import QByteArray, QSize, Qt, pyqtSignal
+from PyQt5.QtGui import QFont, QFontDatabase, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
-    QPushButton,
     QMessageBox,
+    QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
@@ -56,10 +52,9 @@ except ImportError:
 log = logging.getLogger("prisma.wizard")
 
 # ── Design system ──────────────────────────────────────────────────────────────
-from gui.styles import STYLESHEET, COLORS
-
 # ── Icônes PRISMA ──────────────────────────────────────────────────────────────
 from gui.prisma_icons import get_prisma_icon
+from gui.styles import COLORS, STYLESHEET
 
 try:
     import qtawesome as qta
@@ -760,7 +755,7 @@ class InputQCPage(_BaseStepPage):
         return panel
 
     def _build_params(self) -> QWidget:
-        from gui.widgets.parameter_tabs import PeacoQCForm, FlowAIForm
+        from gui.widgets.parameter_tabs import FlowAIForm, PeacoQCForm
 
         outer = QWidget()
         outer.setObjectName("stepContent")
@@ -1127,7 +1122,7 @@ class DimRedPage(_BaseStepPage):
         return panel
 
     def _build_params(self) -> QWidget:
-        from gui.widgets.parameter_tabs import ViSNEForm, UMAPForm, PHATEForm
+        from gui.widgets.parameter_tabs import PHATEForm, UMAPForm, ViSNEForm
 
         w, self._tab_widget, self._tab_map = _make_params_tabs(
             [
@@ -1193,9 +1188,9 @@ class ClusteringPage(_BaseStepPage):
     def _build_params(self) -> QWidget:
         from gui.widgets.parameter_tabs import (
             FlowSOMForm,
-            PhenoGraphForm,
             HDBSCANForm,
             PARCForm,
+            PhenoGraphForm,
             SPADEForm,
         )
 
@@ -1290,7 +1285,7 @@ class AdvancedPage(_BaseStepPage):
         return w
 
     def _build_params(self) -> QWidget:
-        from gui.widgets.parameter_tabs import CITRUSForm, WanderlustForm, WishboneForm, HarmonyForm
+        from gui.widgets.parameter_tabs import CITRUSForm, HarmonyForm, WanderlustForm, WishboneForm
 
         # Placeholder quand rien de sélectionné
         ph = QWidget()
@@ -1652,7 +1647,7 @@ class PrismaWizard(QMainWindow):
 
         if self._gating_win is None or self._gating_workspace_widget is None:
             try:
-                from src.prisma.gui.viewer.gating_workspace import PrismaGatingWorkspace
+                from prisma.gui.viewer.gating_workspace import PrismaGatingWorkspace
 
                 self._gating_workspace_widget = PrismaGatingWorkspace()
                 self._gating_workspace_widget.gatingContextSaved.connect(

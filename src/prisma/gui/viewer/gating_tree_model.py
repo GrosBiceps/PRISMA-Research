@@ -37,7 +37,6 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QBrush, QColor, QFont
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
-
 # ---------------------------------------------------------------------------
 # Nœud de l'arbre
 # ---------------------------------------------------------------------------

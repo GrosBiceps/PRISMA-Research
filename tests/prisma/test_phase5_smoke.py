@@ -91,26 +91,26 @@ def _make_mock_engine() -> MagicMock:
 
 class TestStatisticsDock:
     def test_initial_state_empty(self, qapp):
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         dock = StatisticsDock()
         # Doit être dans l'état vide sans erreur
         assert dock is not None
 
     def test_set_loading(self, qapp):
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         dock = StatisticsDock()
         dock.set_loading()  # Ne doit pas lever d'exception
 
     def test_set_error(self, qapp):
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         dock = StatisticsDock()
         dock.set_error("Erreur de test")  # Ne doit pas lever d'exception
 
     def test_set_dataframe_normal(self, qapp):
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         dock = StatisticsDock()
         df = pd.DataFrame(
@@ -127,21 +127,21 @@ class TestStatisticsDock:
         assert dock._table.rowCount() == 2
 
     def test_set_dataframe_empty_triggers_clear(self, qapp):
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         dock = StatisticsDock()
         dock.set_dataframe(pd.DataFrame())
         assert dock._table.rowCount() == 0
 
     def test_set_dataframe_none_triggers_clear(self, qapp):
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         dock = StatisticsDock()
         dock.set_dataframe(None)  # type: ignore[arg-type]
         assert dock._table.rowCount() == 0
 
     def test_clear(self, qapp):
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         dock = StatisticsDock()
         dock.set_dataframe(
@@ -159,8 +159,8 @@ class TestStatisticsDock:
 
 class TestStatisticsController:
     def test_refresh_no_sample(self, qapp):
-        from src.prisma.gui.viewer.statistics_controller import StatisticsController
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_controller import StatisticsController
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         engine = _make_mock_engine()
         engine.active_sample_id = None
@@ -172,8 +172,8 @@ class TestStatisticsController:
         ctrl.refresh_statistics()  # Doit appeler dock.clear(), pas d'exception
 
     def test_refresh_with_sample(self, qapp):
-        from src.prisma.gui.viewer.statistics_controller import StatisticsController
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_controller import StatisticsController
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
         from PyQt5.QtTest import QTest
 
         engine = _make_mock_engine()
@@ -191,8 +191,8 @@ class TestStatisticsController:
         assert not ctrl._refresh_pending
 
     def test_on_engine_analysis_completed(self, qapp):
-        from src.prisma.gui.viewer.statistics_controller import StatisticsController
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_controller import StatisticsController
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         engine = _make_mock_engine()
         dock = StatisticsDock()
@@ -200,8 +200,8 @@ class TestStatisticsController:
         ctrl.on_engine_analysis_completed("sample_001")
 
     def test_on_engine_strategy_changed_invalidates_cache(self, qapp):
-        from src.prisma.gui.viewer.statistics_controller import StatisticsController
-        from src.prisma.gui.viewer.statistics_dock import StatisticsDock
+        from prisma.gui.viewer.statistics_controller import StatisticsController
+        from prisma.gui.viewer.statistics_dock import StatisticsDock
 
         engine = _make_mock_engine()
         dock = StatisticsDock()
@@ -218,7 +218,7 @@ class TestStatisticsController:
 
 class TestPopulationTreeController:
     def test_build_panel_widget(self, qapp):
-        from src.prisma.gui.viewer.population_tree_controller import PopulationTreeController
+        from prisma.gui.viewer.population_tree_controller import PopulationTreeController
 
         engine = _make_mock_engine()
         ctrl = PopulationTreeController(engine=engine)
@@ -227,7 +227,7 @@ class TestPopulationTreeController:
         assert ctrl.tree_view is not None
 
     def test_refresh_tree_empty_hierarchy(self, qapp):
-        from src.prisma.gui.viewer.population_tree_controller import PopulationTreeController
+        from prisma.gui.viewer.population_tree_controller import PopulationTreeController
 
         engine = _make_mock_engine()
         engine.build_hierarchy.return_value = []
@@ -237,7 +237,7 @@ class TestPopulationTreeController:
         assert ctrl.gate_tree_model.rowCount() == 0
 
     def test_set_current_sample(self, qapp):
-        from src.prisma.gui.viewer.population_tree_controller import PopulationTreeController
+        from prisma.gui.viewer.population_tree_controller import PopulationTreeController
 
         engine = _make_mock_engine()
         ctrl = PopulationTreeController(engine=engine)
@@ -246,7 +246,7 @@ class TestPopulationTreeController:
         assert ctrl._current_sample_id == "sample_001"
 
     def test_current_gate_path_no_selection(self, qapp):
-        from src.prisma.gui.viewer.population_tree_controller import PopulationTreeController
+        from prisma.gui.viewer.population_tree_controller import PopulationTreeController
 
         engine = _make_mock_engine()
         ctrl = PopulationTreeController(engine=engine)
@@ -255,7 +255,7 @@ class TestPopulationTreeController:
         assert result is None
 
     def test_on_engine_strategy_changed(self, qapp):
-        from src.prisma.gui.viewer.population_tree_controller import PopulationTreeController
+        from prisma.gui.viewer.population_tree_controller import PopulationTreeController
 
         engine = _make_mock_engine()
         ctrl = PopulationTreeController(engine=engine)
@@ -264,7 +264,7 @@ class TestPopulationTreeController:
         engine.build_hierarchy.assert_called()
 
     def test_population_selected_signal_emitted(self, qapp):
-        from src.prisma.gui.viewer.population_tree_controller import PopulationTreeController
+        from prisma.gui.viewer.population_tree_controller import PopulationTreeController
         from PyQt5.QtCore import QModelIndex
 
         engine = _make_mock_engine()
@@ -286,13 +286,13 @@ class TestPopulationTreeController:
 
 class TestWorksheetLayout:
     def test_validate_column_count_valid(self):
-        from src.prisma.gui.viewer.worksheet_layout import validate_column_count
+        from prisma.gui.viewer.worksheet_layout import validate_column_count
 
         for n in [1, 2, 3, 4]:
             assert validate_column_count(n) == n
 
     def test_validate_column_count_invalid(self):
-        from src.prisma.gui.viewer.worksheet_layout import validate_column_count, WorksheetLayoutError
+        from prisma.gui.viewer.worksheet_layout import validate_column_count, WorksheetLayoutError
 
         with pytest.raises(WorksheetLayoutError):
             validate_column_count(0)
@@ -300,7 +300,7 @@ class TestWorksheetLayout:
             validate_column_count(5)
 
     def test_save_and_load_layout(self, tmp_path):
-        from src.prisma.gui.viewer.worksheet_layout import (
+        from prisma.gui.viewer.worksheet_layout import (
             WorkspaceLayoutState,
             PanelState,
             save_layout_state,
@@ -348,14 +348,14 @@ class TestWorksheetLayout:
         assert restored.panels[1].gate_node == ("Gate_A", "root")
 
     def test_load_missing_file_returns_default(self, tmp_path):
-        from src.prisma.gui.viewer.worksheet_layout import load_layout_state
+        from prisma.gui.viewer.worksheet_layout import load_layout_state
 
         state = load_layout_state(tmp_path / "nonexistent.json")
         assert state.panel_column_count == 2
         assert state.panels == []
 
     def test_load_corrupt_json_returns_default(self, tmp_path):
-        from src.prisma.gui.viewer.worksheet_layout import load_layout_state
+        from prisma.gui.viewer.worksheet_layout import load_layout_state
 
         bad_file = tmp_path / "bad.json"
         bad_file.write_text("NOT JSON !!!", encoding="utf-8")
@@ -363,7 +363,7 @@ class TestWorksheetLayout:
         assert state.panel_column_count == 2
 
     def test_load_invalid_column_count_fallback(self, tmp_path):
-        from src.prisma.gui.viewer.worksheet_layout import load_layout_state, _FORMAT_VERSION
+        from prisma.gui.viewer.worksheet_layout import load_layout_state, _FORMAT_VERSION
 
         bad_state = {
             "format": _FORMAT_VERSION,
@@ -383,7 +383,7 @@ class TestWorksheetLayout:
 
 class TestWorksheetAreaColumns:
     def test_set_panel_columns_valid(self, qapp):
-        from src.prisma.gui.viewer.gating_workspace import WorksheetArea
+        from prisma.gui.viewer.gating_workspace import WorksheetArea
 
         wa = WorksheetArea()
         for n in [1, 2, 3, 4]:
@@ -391,15 +391,15 @@ class TestWorksheetAreaColumns:
             assert wa._COLS == n
 
     def test_set_panel_columns_invalid(self, qapp):
-        from src.prisma.gui.viewer.gating_workspace import WorksheetArea
-        from src.prisma.gui.viewer.worksheet_layout import WorksheetLayoutError
+        from prisma.gui.viewer.gating_workspace import WorksheetArea
+        from prisma.gui.viewer.worksheet_layout import WorksheetLayoutError
 
         wa = WorksheetArea()
         with pytest.raises(WorksheetLayoutError):
             wa.set_panel_columns(5)
 
     def test_get_layout_state_empty(self, qapp):
-        from src.prisma.gui.viewer.gating_workspace import WorksheetArea
+        from prisma.gui.viewer.gating_workspace import WorksheetArea
 
         wa = WorksheetArea()
         wa.set_panel_columns(3)

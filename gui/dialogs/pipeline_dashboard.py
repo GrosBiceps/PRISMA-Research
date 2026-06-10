@@ -13,43 +13,39 @@ Compatible avec le thÃ¨me PRISMA v2 (PyQt5).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
+from PyQt5.QtCore import QSize, Qt, QTimer
+from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QIcon
 from PyQt5.QtWidgets import (
-    QDialog,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QFrame,
-    QScrollArea,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QProgressBar,
-    QSizePolicy,
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
-    QSpinBox,
+    QDialog,
     QDoubleSpinBox,
-    QLineEdit,
     QFileDialog,
+    QFrame,
     QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
     QMessageBox,
-    QApplication,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
     QSplitter,
-    QGraphicsDropShadowEffect,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt5.QtCore import Qt, QSize, QUrl, QMimeData, QTimer
-from PyQt5.QtGui import QFont, QColor, QDragEnterEvent, QDropEvent, QIcon
 
-from gui.widgets.toggle_switch import ToggleSwitch
-from gui.widgets.settings_card import SettingsCard
 from gui.widgets.log_console import LogConsole
+from gui.widgets.settings_card import SettingsCard
+from gui.widgets.toggle_switch import ToggleSwitch
 
 try:
     import qtawesome as qta

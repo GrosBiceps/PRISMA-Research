@@ -45,21 +45,20 @@ from __future__ import annotations
 import copy
 import gc
 import time
-import logging
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Any
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 from config.pipeline_config import PipelineConfig
-from src.prisma.io.fcs_reader import get_fcs_files, load_as_flow_samples
-from src.prisma.core.models_legacy.sample import FlowSample
-from src.prisma.core.models_legacy.pipeline_result import PipelineResult
-from src.prisma.services.preprocessing_service import preprocess_combined
-from src.prisma.services.clustering_service import select_markers_for_clustering
-from src.prisma.pipeline.nbm_cache_manager import NBMCacheManager
-from src.prisma.utils.logger import GatingLogger, get_logger
+from prisma.core.models_legacy.pipeline_result import PipelineResult
+from prisma.core.models_legacy.sample import FlowSample
+from prisma.io.fcs_reader import get_fcs_files, load_as_flow_samples
+from prisma.pipeline.nbm_cache_manager import NBMCacheManager
+from prisma.services.clustering_service import select_markers_for_clustering
+from prisma.services.preprocessing_service import preprocess_combined
+from prisma.utils.logger import GatingLogger, get_logger
 
 # FlowSOMPipeline (MRD clinique) est maintenant dans clinical_module/mrd/pipeline_executor_legacy.py
 # Import conditionnel — disponible uniquement si clinical_module est activé.
@@ -74,7 +73,7 @@ except ImportError:
     PipelineCheckpointManager = None  # type: ignore[assignment,misc]
     _CLINICAL_AVAILABLE = False
 
-from src.prisma.core.models_legacy.gate_result import GatingContext
+from prisma.core.models_legacy.gate_result import GatingContext
 
 _logger = get_logger("pipeline.batch")
 
@@ -644,7 +643,7 @@ class BatchPipeline:
     ) -> Optional[str]:
         """Génère (ou met à jour) le fichier synthèse_cohorte.xlsx."""
         try:
-            from src.prisma.io.csv_exporter import (
+            from prisma.io.csv_exporter import (
                 extract_date_from_filename as _edf,
             )
 

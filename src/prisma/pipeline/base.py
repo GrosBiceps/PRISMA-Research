@@ -11,11 +11,9 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, List, Protocol, runtime_checkable
 
-import numpy as np
-
-from prisma.core.models import Experiment, RunMetadata, Sample
+from prisma.core.models import Experiment, RunMetadata
 
 logger = logging.getLogger(__name__)
 

@@ -3,10 +3,9 @@
 from collections.abc import Callable
 
 import numpy as np
+from flowsom.models.numpy_numba import nb_median_axis_0
 from numba import jit, prange
 from sklearn.neighbors import BallTree
-
-from flowsom.models.numpy_numba import nb_median_axis_0
 
 
 @jit(nopython=True, fastmath=True)

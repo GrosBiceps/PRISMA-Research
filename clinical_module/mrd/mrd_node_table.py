@@ -23,33 +23,27 @@ import math
 from typing import Any, Dict, List, Optional
 
 from PyQt5.QtCore import (
-    Qt,
-    pyqtSignal,
-    QModelIndex,
-    QVariant,
-    QSize,
     QAbstractTableModel,
+    QModelIndex,
+    QSize,
     QSortFilterProxyModel,
+    Qt,
+    QVariant,
+    pyqtSignal,
 )
-from PyQt5.QtGui import QColor, QFont, QBrush
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QButtonGroup,
+    QComboBox,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
-    QFrame,
-    QButtonGroup,
     QPushButton,
     QScrollArea,
-    QGridLayout,
     QSizePolicy,
-    QComboBox,
-    QAbstractItemView,
-    QTableView,
-    QHeaderView,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
-    QStyle,
+    QVBoxLayout,
+    QWidget,
 )
 
 # ── Palette PRISMA v2 ─────────────────────────────────────────────────
@@ -280,7 +274,6 @@ class MRDNodeCard(QFrame):
         """Radar réel via matplotlib."""
         from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
         from matplotlib.figure import Figure
-        import numpy as np
 
         markers = self._filter_clinical_markers(self._marker_cols)
         row = self._mfi_data.loc[self._node_id, markers]

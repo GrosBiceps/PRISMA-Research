@@ -22,14 +22,9 @@ from typing import Any, Dict, List, Optional
 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
-    QCheckBox,
-    QDoubleSpinBox,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
     QScrollArea,
-    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -57,17 +52,22 @@ try:
         section_label,
     )
 except ImportError:
-    import sys, os
+    import os
+    import sys
     _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if _root not in sys.path:
         sys.path.insert(0, _root)
     from gui.widgets.config_binding import (  # type: ignore
-        CheckBinding, ComboBinding, ConfigBinder, DoubleSpinBinding,
-        LineEditBinding, NClustBinding, SpinBinding,
+        CheckBinding,
+        ComboBinding,
+        ConfigBinder,
+        DoubleSpinBinding,
+        LineEditBinding,
+        NClustBinding,
+        SpinBinding,
     )
     from gui.widgets.shared_forms import (  # type: ignore
-        DarkComboBox, FormGrid, ToggleSwitch,
-        labeled_combo, labeled_dspin, labeled_spin, make_toggle, section_label,
+        FormGrid,
     )
 
 

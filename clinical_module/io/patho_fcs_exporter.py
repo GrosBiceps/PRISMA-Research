@@ -24,14 +24,14 @@ Usage:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
 
 from clinical_module.mrd.mrd_calculator import MRDResult
-from src.prisma.io.fcs_writer import export_to_fcs_kaluza
-from src.prisma.utils.logger import get_logger
+from prisma.io.fcs_writer import export_to_fcs_kaluza
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("io.patho_fcs_exporter")
 

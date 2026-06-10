@@ -18,11 +18,11 @@ Optimisations retenues :
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
-from PyQt5.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QTransform
+from PyQt5.QtCore import QPointF, Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -33,7 +33,7 @@ from PyQt5.QtWidgets import (
 from .gating_items import PolygonGate
 
 if TYPE_CHECKING:
-    from src.prisma.core.models_legacy.sample import Sample
+    from prisma.core.models_legacy.sample import Sample
 
 # ---------------------------------------------------------------------------
 # Constantes de rendu

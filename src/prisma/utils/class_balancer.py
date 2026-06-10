@@ -6,7 +6,7 @@ représentent parfois < 1% du pool. FlowSOM, optimisé pour la densité, rate le
 clusters rares. Ce module impose un rapport sain/patho contrôlé AVANT le SOM.
 
 Usage:
-    from src.prisma.utils.class_balancer import equilibrer_pool_flowsom
+    from prisma.utils.class_balancer import equilibrer_pool_flowsom
 
     df_balanced = equilibrer_pool_flowsom(
         samples=processed_samples,
@@ -21,12 +21,12 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 import pandas as pd
 
-from src.prisma.core.models_legacy.sample import FlowSample
+from prisma.core.models_legacy.sample import FlowSample
 
 _logger = logging.getLogger("utils.class_balancer")
 

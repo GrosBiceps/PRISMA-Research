@@ -119,8 +119,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from src.prisma.exceptions import ClinicalMathError, PanelConfigError
-from src.prisma.utils.logger import get_logger
+from prisma.exceptions import ClinicalMathError, PanelConfigError
+from prisma.utils.logger import get_logger
 
 # Imports optionnels — dégradation gracieuse si scipy/sklearn absents
 try:

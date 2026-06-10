@@ -19,12 +19,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
-import numpy as np
 import pandas as pd
 
-from src.prisma.io.fcs_writer import export_to_fcs
+from prisma.io.fcs_writer import export_to_fcs
 
 _logger = logging.getLogger(__name__)
 

@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # DimReducStrategy
 # ---------------------------------------------------------------------------

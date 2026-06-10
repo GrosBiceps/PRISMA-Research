@@ -15,14 +15,13 @@ Stratégie export FCS :
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("exports.gating_exporter")
 
@@ -401,7 +400,7 @@ class GatingExporter:
             )
 
         try:
-            from src.prisma.io.fcs_writer import export_to_fcs
+            from prisma.io.fcs_writer import export_to_fcs
             # FlowKit retourne les colonnes sous forme de tuples (pnn, pns)
             # fcs_writer attend des chaînes — normaliser
             if df.columns.dtype == object and isinstance(df.columns[0], tuple):

@@ -29,36 +29,29 @@ Usage :
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-from config.pipeline_config import PopulationMappingConfig
 from clinical_module.phenotyping.blast_detection import (
-    build_blast_weights,
     build_blast_score_dataframe,
+    build_blast_weights,
     compute_reference_normalization,
     trace_blast_cells_to_fcs_source,
 )
 from clinical_module.phenotyping.population_mapping import (
-    POPULATION_COLORS,
-    apply_cyto_transform_matrix,
-    build_direct_mapping_a_only,
     build_population_color_map,
     compute_pop_stats_from_csv,
     extract_node_centroids_from_fcs,
-    filter_area_columns,
-    get_population_summary,
     load_population_csv_transformed,
     map_nodes_to_metaclusters,
     map_populations_to_nodes_v3,
     map_populations_to_nodes_v5,
-    normalize_col_name,
 )
-from src.prisma.utils.logger import get_logger
+from config.pipeline_config import PopulationMappingConfig
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("services.population_mapping")
 
@@ -443,16 +436,16 @@ class PopulationMappingService:
     ) -> None:
         """§10.4c–§10.6 — Génération de toutes les visualisations."""
         try:
-            from src.prisma.visualization.population_viz import (
+            from prisma.visualization.population_viz import (
+                plot_blast_fcs_source,
                 plot_blast_heatmap,
                 plot_blast_radar,
                 plot_blast_scores_bar,
-                plot_blast_fcs_source,
-                plot_mrd_blast_radar,
+                plot_heatmap_comparative,
                 plot_lympho_verification,
+                plot_mrd_blast_radar,
                 plot_mst_interactive,
                 plot_som_grid_interactive,
-                plot_heatmap_comparative,
             )
         except ImportError as exc:
             _logger.warning("Visualisations population non disponibles: %s", exc)

@@ -19,23 +19,23 @@ import numpy as np
 import pandas as pd
 
 from config.pipeline_config import PipelineConfig
-from src.prisma.io.fcs_writer import export_to_fcs_kaluza
-from src.prisma.io.csv_exporter import (
-    export_cells_csv,
-    export_statistics_csv,
-    export_mfi_matrix_csv,
-    export_per_file_csv,
-    compute_cluster_statistics,
-)
-from src.prisma.io.cluster_distribution_exporter import (
+from prisma.io.cluster_distribution_exporter import (
     export_cluster_distribution,
 )
-from src.prisma.io.json_exporter import (
-    export_analysis_metadata,
+from prisma.io.csv_exporter import (
+    compute_cluster_statistics,
+    export_cells_csv,
+    export_mfi_matrix_csv,
+    export_per_file_csv,
+    export_statistics_csv,
+)
+from prisma.io.fcs_writer import export_to_fcs_kaluza
+from prisma.io.json_exporter import (
     build_analysis_metadata,
+    export_analysis_metadata,
     export_gating_log,
 )
-from src.prisma.utils.logger import GatingLogger, get_logger
+from prisma.utils.logger import GatingLogger, get_logger
 
 _logger = get_logger("services.export")
 
@@ -267,7 +267,7 @@ class ExportService:
         Returns:
             True si au moins un graphique généré.
         """
-        from src.prisma.visualization.gating_plots import (
+        from prisma.visualization.gating_plots import (
             generate_all_gating_plots,
         )
 
@@ -293,9 +293,9 @@ class ExportService:
         Returns:
             Dict {fig_name: figure_object} des figures générées.
         """
-        from src.prisma.visualization.flowsom_plots import (
-            plot_mfi_heatmap,
+        from prisma.visualization.flowsom_plots import (
             plot_metacluster_sizes,
+            plot_mfi_heatmap,
         )
 
         ts = self.timestamp
@@ -332,9 +332,9 @@ class ExportService:
         Returns:
             Dict avec clés: chemins fichiers + 'fig_sankey' (go.Figure).
         """
-        from src.prisma.visualization.gating_plots import (
-            generate_sankey_diagram,
+        from prisma.visualization.gating_plots import (
             generate_per_file_sankey,
+            generate_sankey_diagram,
         )
 
         paths: Dict[str, Any] = {}
@@ -400,7 +400,7 @@ class ExportService:
         Returns:
             Chemin du fichier HTML si succès, None sinon.
         """
-        from src.prisma.visualization.html_report import (
+        from prisma.visualization.html_report import (
             generate_html_report,
         )
 
@@ -471,7 +471,7 @@ class ExportService:
         Returns:
             Chemin du fichier PDF si succès, None sinon.
         """
-        from src.prisma.visualization.pdf_report import (
+        from prisma.visualization.pdf_report import (
             generate_pdf_report,
         )
 

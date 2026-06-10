@@ -10,7 +10,6 @@ generate_interactive_gating_dashboard (dashboard Plotly complet).
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,15 +29,15 @@ try:
 except ImportError:
     _PLOTLY_AVAILABLE = False
 
-from src.prisma.visualization.plot_helpers import (
+from prisma.core.gating import PreGating
+from prisma.utils.logger import get_logger
+from prisma.visualization.plot_helpers import (
+    BG_COLOR,
+    add_gate_rectangle,
     plot_density,
     plot_gating,
-    add_gate_rectangle,
     save_figure,
-    BG_COLOR,
 )
-from src.prisma.core.gating import PreGating
-from src.prisma.utils.logger import get_logger
 
 _logger = get_logger("visualization.gating_plots")
 
@@ -1586,7 +1585,7 @@ def generate_interactive_gating_dashboard(
                 return masks[k]
         return None
 
-    from src.prisma.core.gating import PreGating
+    from prisma.core.gating import PreGating
 
     fsc_a_idx = PreGating.find_marker_index(var_names, ["FSC-A"])
     fsc_h_idx = PreGating.find_marker_index(var_names, ["FSC-H"])

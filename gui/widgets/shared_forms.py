@@ -21,7 +21,6 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QSpinBox,
@@ -30,11 +29,12 @@ from PyQt5.QtWidgets import (
 
 # Import interne PRISMA
 try:
-    from gui.widgets.toggle_switch import ToggleSwitch
     from gui.main_window import DarkComboBox
+    from gui.widgets.toggle_switch import ToggleSwitch
 except ImportError:
     # Fallback relatif (exécution directe / tests)
-    import importlib, sys, os
+    import os
+    import sys
     _pkg = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if _pkg not in sys.path:
         sys.path.insert(0, _pkg)

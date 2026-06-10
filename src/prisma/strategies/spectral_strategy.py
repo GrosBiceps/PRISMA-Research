@@ -8,9 +8,8 @@ Supporte matrice de référence (spillover/unmixing matrix).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 from scipy.optimize import nnls

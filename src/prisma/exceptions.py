@@ -26,7 +26,6 @@ PipelineStageError) sont maintenues pour la rétrocompatibilité.
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Racine
 # ---------------------------------------------------------------------------

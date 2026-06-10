@@ -97,7 +97,7 @@ class TestOOMProtection:
         Le mécanisme anti-OOM (chunk auto + halvage sur OOM) doit absorber
         la pression mémoire et retourner un tableau d'indices valide.
         """
-        from src.prisma.core.torch_utils import torch_knn_indices, torch_available
+        from prisma.core.torch_utils import torch_knn_indices, torch_available
 
         if not torch_available():
             pytest.skip("PyTorch non disponible dans l'environnement")
@@ -147,7 +147,7 @@ class TestOOMProtection:
         Sur CPU (ou si CUDA absent), torch_knn_indices doit fonctionner
         sur un petit dataset sans planter.
         """
-        from src.prisma.core.torch_utils import torch_knn_indices, torch_available
+        from prisma.core.torch_utils import torch_knn_indices, torch_available
 
         if not torch_available():
             pytest.skip("PyTorch non disponible dans l'environnement")
@@ -173,7 +173,7 @@ class TestOOMProtection:
         except ImportError:
             pytest.skip("PyTorch non disponible")
 
-        from src.prisma.core.torch_utils import torch_knn_indices
+        from prisma.core.torch_utils import torch_knn_indices
         import inspect
 
         # Inspecter le module pour accéder à _compute_chunk_size si exposé
@@ -197,7 +197,7 @@ class TestOOMProtection:
 
         Lancer avec : pytest -m slow tests/prisma/test_oom_protection.py -v -s
         """
-        from src.prisma.core.torch_utils import torch_knn_indices, torch_available, torch_cuda_available
+        from prisma.core.torch_utils import torch_knn_indices, torch_available, torch_cuda_available
 
         if not torch_available():
             pytest.skip("PyTorch non disponible")

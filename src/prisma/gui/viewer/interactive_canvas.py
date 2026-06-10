@@ -21,18 +21,16 @@ Signaux émis :
 
 from __future__ import annotations
 
-import logging
 from enum import Enum, auto
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt, QRectF, pyqtSignal
-from PyQt5.QtGui import QColor, QPen
+from PyQt5.QtCore import QRectF, Qt, pyqtSignal
 from PyQt5.QtWidgets import QWidget
 
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("viewer.interactive_canvas")
 

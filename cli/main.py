@@ -15,7 +15,6 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import NoReturn
 
 
 def main() -> None:
@@ -29,7 +28,6 @@ def main() -> None:
         build_argument_parser,
         detect_config_file,
     )
-    from flowsom_pipeline_pro.config.pipeline_config import PipelineConfig
     from flowsom_pipeline_pro.src.pipeline.pipeline_executor import FlowSOMPipeline
 
     parser = build_argument_parser()

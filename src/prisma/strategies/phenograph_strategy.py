@@ -22,8 +22,8 @@ import logging
 import numpy as np
 import scipy.sparse as sp
 
-from prisma.core.registry import StrategyRegistry
 from prisma.core.gpu_context import GPUContext
+from prisma.core.registry import StrategyRegistry
 from prisma.strategies.base import ClusterParams
 
 logger = logging.getLogger(__name__)
@@ -84,8 +84,8 @@ except ImportError:
 
 # ── Backend 4 : sklearn fallback ─────────────────────────────────────────────
 try:
-    from sklearn.neighbors import NearestNeighbors as _skNN
     from sklearn.cluster import AgglomerativeClustering as _Agg
+    from sklearn.neighbors import NearestNeighbors as _skNN
     _SKLEARN_AVAILABLE = True
 except ImportError:
     _skNN = _Agg = None

@@ -39,11 +39,11 @@ try:
         PageBreak,
         PageTemplate,
         Paragraph,
+        SimpleDocTemplate,
         Spacer,
         Table,
         TableStyle,
     )
-    from reportlab.platypus import SimpleDocTemplate
     _RL = True
 except ImportError:
     _logger.warning("reportlab non disponible — export PDF désactivé (pip install reportlab)")
@@ -168,7 +168,7 @@ def _plotly_to_png(fig: Any, wide: bool = False) -> Optional[bytes]:
     try:
         # Réutilise le scope kaleido déjà démarré si disponible
         try:
-            from src.prisma.utils.kaleido_scope import ensure_kaleido_scope
+            from prisma.utils.kaleido_scope import ensure_kaleido_scope
             ensure_kaleido_scope()
         except Exception:
             pass

@@ -11,15 +11,14 @@ Contient:
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 import numpy as np
 
 from prisma.core.models_legacy.experiment import Experiment
+
 from .batch import (
-    CohortMatrix,
     HarmonyParams,
     build_cohort_matrix,
     inject_cluster_labels,
@@ -40,8 +39,8 @@ except ImportError:
     _PHENOGRAPH_AVAILABLE = False
 
 try:
-    import scanpy as sc  # type: ignore
     import anndata as ad  # type: ignore
+    import scanpy as sc  # type: ignore
 
     _SCANPY_AVAILABLE = True
 except ImportError:

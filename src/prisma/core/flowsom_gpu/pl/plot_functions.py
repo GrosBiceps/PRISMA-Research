@@ -6,13 +6,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from flowsom.tl import get_channels, get_markers
 from matplotlib import collections as mc
 from matplotlib import gridspec
 from scanpy.preprocessing import neighbors
 from scanpy.tools import umap
 from scipy.stats import gaussian_kde
-
-from flowsom.tl import get_channels, get_markers
 
 from ._plot_helper_functions import (
     FlowSOM_colors,

@@ -16,7 +16,6 @@ Retourne un PipelineResult enrichi avec les métadonnées de clustering.
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -55,21 +54,17 @@ except (ImportError, OSError) as _harmony_import_error:
         )
     del _pre_logger, _error_msg
 
-from config.pipeline_config import PipelineConfig
 from config.constants import SCATTER_PATTERNS
-from src.prisma.core.models_legacy.sample import FlowSample
-from src.prisma.core.models_legacy.pipeline_result import (
-    PipelineResult,
-    ClusteringMetrics,
-)
-from src.prisma.core.clustering import FlowSOMClusterer
-from src.prisma.core.metaclustering import find_optimal_clusters
-from src.prisma.utils.validators import (
-    check_no_fsc_ssc_in_analysis_markers,
+from config.pipeline_config import PipelineConfig
+from prisma.core.clustering import FlowSOMClusterer
+from prisma.core.metaclustering import find_optimal_clusters
+from prisma.core.models_legacy.sample import FlowSample
+from prisma.utils.class_balancer import equilibrer_pool_flowsom
+from prisma.utils.logger import get_logger
+from prisma.utils.validators import (
     check_nan,
+    check_no_fsc_ssc_in_analysis_markers,
 )
-from src.prisma.utils.logger import get_logger
-from src.prisma.utils.class_balancer import equilibrer_pool_flowsom
 
 _logger = get_logger("services.clustering")
 
@@ -395,11 +390,32 @@ def stack_samples(
             n_before,  # taille originale, pas post-échantillonnage
         )
 
-    # Contrôle NaN final
+    # Contrôle NaN final.
+    # Rationale clinique : imputer un NaN par 0 est dangereux — après logicle/arcsinh,
+    # 0 est une *valeur d'expression valide* (≈ canal négatif), pas une donnée manquante.
+    # Imputer à 0 déplacerait artificiellement ces cellules vers un cluster « négatif ».
+    # On supprime donc les cellules porteuses de NaN (lignes), en réalignant obs.
+    # L'imputation à 0 n'est conservée qu'en dernier recours si *toutes* les cellules
+    # contiennent au moins un NaN (cas dégénéré), pour ne pas renvoyer une matrice vide.
     n_nan = check_nan(X)
     if n_nan > 0:
-        _logger.warning("%d NaN dans la matrice finale — remplacement par 0", n_nan)
-        X = np.nan_to_num(X, nan=0.0)
+        row_has_nan = np.isnan(X).any(axis=1)
+        n_bad_rows = int(row_has_nan.sum())
+        if n_bad_rows < X.shape[0]:
+            _logger.warning(
+                "%d NaN détectés — suppression de %d/%d cellules porteuses de NaN "
+                "(imputation à 0 évitée : biais clinique)",
+                n_nan, n_bad_rows, X.shape[0],
+            )
+            keep = ~row_has_nan
+            X = X[keep]
+            obs = obs.iloc[keep].reset_index(drop=True)
+        else:
+            _logger.error(
+                "%d NaN couvrant toutes les cellules — repli imputation à 0 (cas dégénéré)",
+                n_nan,
+            )
+            X = np.nan_to_num(X, nan=0.0)
 
     _logger.info(
         "Matrice FlowSOM: %d cellules × %d marqueurs",
@@ -562,7 +578,7 @@ def run_clustering(
 
         # Reconstruire des FlowSample synthétiques à partir du DataFrame équilibré,
         # un par fichier source, pour conserver condition/file_origin par cellule.
-        from src.prisma.core.models_legacy.sample import FlowSample as _FlowSample
+        from prisma.core.models_legacy.sample import FlowSample as _FlowSample
 
         _meta_cols = {"condition", "file_origin", "class", _IDX_COL}
         _marker_cols = [c for c in df_balanced.columns if c not in _meta_cols]

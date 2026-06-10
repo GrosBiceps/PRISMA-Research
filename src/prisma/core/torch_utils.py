@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import gc
 import logging
-import math
 import os
 from typing import Optional, Tuple
 

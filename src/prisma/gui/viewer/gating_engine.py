@@ -20,17 +20,16 @@ Architecture :
 
 from __future__ import annotations
 
-import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 try:
-    from PyQt5.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, QMetaObject, Qt
+    from PyQt5.QtCore import QMetaObject, QObject, QRunnable, Qt, QThreadPool, pyqtSignal
     _QT_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _QT_AVAILABLE = False
@@ -59,7 +58,7 @@ if TYPE_CHECKING:
 else:
     fk_type = Any
 
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("viewer.gating_engine")
 
@@ -2230,7 +2229,7 @@ class PrismaFlowEngine(QObject if _QT_AVAILABLE else object):  # type: ignore[mi
         sid = sample_id or self._active_sample_id
         if sid:
             try:
-                from src.prisma.exports.gating_exporter import GatingExporter
+                from prisma.exports.gating_exporter import GatingExporter
 
                 report_raw = self.get_analysis_report()
                 if report_raw is not None and not report_raw.empty:
@@ -2307,7 +2306,7 @@ class PrismaFlowEngine(QObject if _QT_AVAILABLE else object):  # type: ignore[mi
         sid = sample_id or self._active_sample_id
         if sid:
             try:
-                from src.prisma.exports.gating_exporter import GatingExporter
+                from prisma.exports.gating_exporter import GatingExporter
 
                 report_raw = self.get_analysis_report()
                 if report_raw is not None and not report_raw.empty:

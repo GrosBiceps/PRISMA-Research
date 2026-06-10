@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type, TypeVar
 
 if TYPE_CHECKING:
-    from prisma.strategies.base import ClusterStrategy, DimReducStrategy
+    pass
 
 logger = logging.getLogger(__name__)
 

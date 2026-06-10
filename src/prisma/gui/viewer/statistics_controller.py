@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 
 import pandas as pd
-from PyQt5.QtCore import QObject, QRunnable, QThreadPool, Qt, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import QObject, QRunnable, Qt, QThreadPool, pyqtSignal, pyqtSlot
 
 from .gating_engine import PrismaFlowEngine
 from .statistics_dock import StatisticsDock

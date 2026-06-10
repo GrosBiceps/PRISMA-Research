@@ -349,7 +349,8 @@ class Sample:
 # FlowSample — modèle legacy (conservé pour compatibilité pipeline existant)
 # ===========================================================================
 
-from dataclasses import dataclass, field as _field
+from dataclasses import dataclass
+from dataclasses import field as _field
 
 
 @dataclass

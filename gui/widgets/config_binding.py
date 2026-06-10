@@ -21,18 +21,12 @@ Usage:
 
 from __future__ import annotations
 
-from dataclasses import fields as dc_fields
 from typing import Any, Callable, List, Optional
 
 from PyQt5.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
     QLineEdit,
-    QSpinBox,
     QWidget,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers internes

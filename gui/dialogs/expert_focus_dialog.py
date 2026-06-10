@@ -23,22 +23,22 @@ import math
 import re
 from typing import Any, Dict, List, Optional, Set
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QFrame,
-    QPushButton,
-    QScrollArea,
-    QGridLayout,
-    QWidget,
-    QSizePolicy,
     QButtonGroup,
     QComboBox,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
 
 # ── Palette PRISMA v2 ─────────────────────────────────────────────────
@@ -354,9 +354,9 @@ class ExpertNodeCard(QFrame):
         return result
 
     def _build_radar_matplotlib(self) -> QWidget:
+        import numpy as np
         from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
         from matplotlib.figure import Figure
-        import numpy as np
 
         # Marqueurs réellement présents dans la matrice MFI
         mfi_cols = [str(c) for c in list(getattr(self._mfi_data, "columns", []))]

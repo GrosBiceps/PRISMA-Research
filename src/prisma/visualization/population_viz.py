@@ -21,13 +21,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from src.prisma.utils.logger import get_logger
+from prisma.utils.logger import get_logger
 
 _logger = get_logger("visualization.population_viz")
 
 try:
-    import plotly.graph_objects as go
     import plotly.express as px
+    import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
     _PLOTLY_AVAILABLE = True
@@ -919,7 +919,6 @@ def plot_mst_interactive(
         return None
 
     from clinical_module.phenotyping.population_mapping import (
-        POPULATION_COLORS,
         build_population_color_map,
     )
 
