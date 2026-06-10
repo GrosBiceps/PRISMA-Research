@@ -17,10 +17,13 @@ Méthodes disponibles (monolithe exact + apply() dispatcher):
 
 from __future__ import annotations
 
+import logging
 import warnings
 from typing import List, Optional
 
 import numpy as np
+
+_logger = logging.getLogger("prisma.transformers")
 
 # FlowKit pour la transformation Logicle précise (comportement dégradé si absent).
 # On attrape Exception (pas seulement ImportError) car flowutils.logicle_c
@@ -85,11 +88,17 @@ class DataTransformer:
             try:
                 xform = fk.transforms.LogicleTransform(T=T, M=M, W=W, A=A)
                 return xform.apply(data)
-            except:
-                pass
+            except Exception as exc:
+                # Repli logicle → arcsinh : différence clinique non négligeable,
+                # on trace explicitement pour audit (jamais de repli silencieux).
+                _logger.warning(
+                    "LogicleTransform FlowKit échoué (%s: %s) — repli arcsinh approximé",
+                    type(exc).__name__, exc,
+                )
 
-        # Approximation si FlowKit absent: Arcsinh modifié
-        w_val = W * np.log10(np.e)
+        # Approximation si FlowKit absent: Arcsinh modifié.
+        # NB : le paramètre W (largeur linéaire) n'intervient pas dans cette
+        # approximation arcsinh — c'est précisément pourquoi le repli est tracé.
         return np.arcsinh(data / (T / (10**M))) * (M / np.log(10))
 
     @staticmethod
@@ -175,5 +184,61 @@ class DataTransformer:
                 "Valeurs acceptées: 'arcsinh', 'logicle', 'log10', 'none'."
             )
         result[:, fluorescence_idx] = transformed
+        return result
+
+    @staticmethod
+    def apply_per_column_transforms(
+        data: np.ndarray,
+        var_names: List[str],
+        specs: dict,
+    ) -> np.ndarray:
+        """Applique une transformation **par colonne** selon des specs explicites.
+
+        Permet de mélanger logicle/arcsinh/log/none sur des canaux différents
+        (ex. logicle sur les fluo, none sur FSC/SSC), avec cofacteur/paramètres
+        logicle propres à chaque colonne.
+
+        Args:
+            data: Matrice (n_cells, n_markers).
+            var_names: Noms des colonnes (ordre = colonnes de data).
+            specs: Dict {nom_colonne: {"method": str, "cofactor": float,
+                   "T": float, "M": float, "W": float, "A": float}}.
+                   Les colonnes absentes du dict sont laissées inchangées.
+
+        Returns:
+            Matrice transformée (même shape).
+        """
+        result = np.array(data, dtype=np.float32, copy=True)
+        name_to_idx = {str(n): i for i, n in enumerate(var_names)}
+
+        for col, spec in (specs or {}).items():
+            idx = name_to_idx.get(str(col))
+            if idx is None:
+                _logger.debug("apply_per_column_transforms: colonne '%s' absente — ignorée", col)
+                continue
+            method = str(spec.get("method", "none")).lower()
+            if method == "none":
+                continue
+            sub = result[:, idx : idx + 1]
+            try:
+                if method == "arcsinh":
+                    cof = float(spec.get("cofactor", 5.0) or 5.0)
+                    out = DataTransformer.arcsinh_transform(sub, cofactor=cof)
+                elif method == "logicle":
+                    out = DataTransformer.logicle_transform(
+                        sub,
+                        T=float(spec.get("T", 262144.0)),
+                        M=float(spec.get("M", 4.5)),
+                        W=float(spec.get("W", 0.5)),
+                        A=float(spec.get("A", 0.0)),
+                    )
+                elif method in ("log10", "log"):
+                    out = DataTransformer.log_transform(sub)
+                else:
+                    _logger.warning("Méthode '%s' inconnue pour '%s' — colonne inchangée", method, col)
+                    continue
+                result[:, idx : idx + 1] = np.asarray(out, dtype=np.float32)
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning("Transformation '%s' échouée sur '%s' : %s", method, col, exc)
         return result
 

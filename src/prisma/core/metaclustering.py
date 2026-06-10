@@ -397,3 +397,121 @@ def find_optimal_clusters(
 
     _logger.info("k OPTIMAL SELECTIONNE: %d", best_k)
     return best_k
+
+
+def find_optimal_clusters_with_scores(
+    X: np.ndarray,
+    codebook: Optional[np.ndarray] = None,
+    min_clusters: int = 5,
+    max_clusters: int = 35,
+    n_bootstrap: int = 10,
+    sample_size_bootstrap: int = 20_000,
+    min_stability_threshold: float = 0.75,
+    weight_stability: float = 0.65,
+    weight_silhouette: float = 0.35,
+    xdim: int = 10,
+    ydim: int = 10,
+    seed: int = 42,
+    verbose: bool = True,
+) -> Dict[str, Any]:
+    """Auto-clustering 3 phases retournant best_k ET toutes les métriques.
+
+    Variante de :func:`find_optimal_clusters` qui expose les scores intermédiaires
+    (silhouette / stabilité / composite) afin de produire un graphique des
+    métriques d'optimisation (voir ``plot_optimization_results``).
+
+    Args: identiques à ``find_optimal_clusters``.
+
+    Returns:
+        Dict avec clés :
+          - ``best_k``            : int — k optimal retenu
+          - ``silhouette_scores``: {k: silhouette}
+          - ``stability_scores`` : {k: ARI moyen}  (k testés en phase 2)
+          - ``composite_scores`` : {k: score composite}
+          - ``results_df``       : DataFrame [k, silhouette, composite_score]
+          - ``stability_results``: {k: {'mean_ari', 'std_ari'}} pour le plot
+    """
+    import pandas as pd
+
+    k_range = list(range(min_clusters, max_clusters + 1))
+    _logger.info("AUTO-CLUSTERING (avec scores): k ∈ [%d, %d]", min_clusters, max_clusters)
+
+    # ── Phase 0 : codebook de référence si non fourni ────────────────────────
+    if codebook is None:
+        try:
+            import flowsom as fs
+            import anndata as ad
+
+            n_cells = X.shape[0]
+            ref_size = min(50_000, n_cells)
+            rng_ref = np.random.default_rng(seed)
+            ref_idx = rng_ref.choice(n_cells, size=ref_size, replace=False)
+            X_ref = X[ref_idx]
+            adata_ref = ad.AnnData(X_ref)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                warnings.filterwarnings("ignore", category=UserWarning)
+                fsom_ref = fs.FlowSOM(
+                    adata_ref,
+                    cols_to_use=list(range(X_ref.shape[1])),
+                    xdim=xdim, ydim=ydim, n_clusters=max_clusters, seed=seed,
+                )
+                raw_codebook = fsom_ref.get_cluster_data().X
+                if hasattr(raw_codebook, "toarray"):
+                    raw_codebook = raw_codebook.toarray()
+                codebook = np.nan_to_num(np.array(raw_codebook, dtype=np.float32), nan=0.0)
+        except Exception as e:  # noqa: BLE001
+            _logger.warning("Phase 0 échouée (%s) — Phase 1 ignorée", e)
+            codebook = None
+
+    # ── Phase 1 : silhouette sur codebook ────────────────────────────────────
+    if codebook is not None and len(codebook) >= min_clusters:
+        silhouette_scores = phase1_silhouette_on_codebook(
+            codebook, k_range, seed=seed, verbose=verbose
+        )
+        top_half = sorted(silhouette_scores, key=silhouette_scores.get, reverse=True)
+        top_half = top_half[: max(len(top_half) // 2, 3)]
+        k_candidates = sorted([k for k in top_half if min_clusters <= k <= max_clusters])
+    else:
+        silhouette_scores = {k: 0.5 for k in k_range}
+        k_candidates = list(k_range)
+
+    # ── Phase 2 : stabilité bootstrap ────────────────────────────────────────
+    stability_scores = phase2_bootstrap_stability(
+        X, k_candidates, n_bootstrap=n_bootstrap, sample_size=sample_size_bootstrap,
+        seed=seed, xdim=xdim, ydim=ydim, verbose=verbose,
+    )
+
+    # ── Phase 3 : composite ──────────────────────────────────────────────────
+    best_k, composite_scores = phase3_composite_selection(
+        silhouette_scores, stability_scores,
+        min_stability_threshold=min_stability_threshold,
+        weight_stability=weight_stability, weight_silhouette=weight_silhouette,
+        verbose=verbose,
+    )
+    if best_k is None:
+        best_k = (min_clusters + max_clusters) // 2
+
+    # ── Mise en forme pour le graphique ──────────────────────────────────────
+    results_df = pd.DataFrame(
+        {
+            "k": k_range,
+            "silhouette": [silhouette_scores.get(k, np.nan) for k in k_range],
+            "composite_score": [composite_scores.get(k, np.nan) for k in k_range],
+        }
+    )
+    # stability_results au format attendu par plot_optimization_results.
+    # phase2 ne renvoie qu'une moyenne ARI → std non disponible ici (0.0).
+    stability_results = {
+        int(k): {"mean_ari": float(v), "std_ari": 0.0}
+        for k, v in stability_scores.items()
+    }
+
+    return {
+        "best_k": int(best_k),
+        "silhouette_scores": silhouette_scores,
+        "stability_scores": stability_scores,
+        "composite_scores": composite_scores,
+        "results_df": results_df,
+        "stability_results": stability_results,
+    }

@@ -21,29 +21,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.sample import Sample, SampleValidationError, ChannelMeta
-from models.experiment import Experiment, ExperimentError
+from prisma.core.models_legacy.sample import Sample, SampleValidationError, ChannelMeta
+from prisma.core.models_legacy.experiment import Experiment, ExperimentError
 
-# Import direct du module pour éviter les imports lourds de core/__init__.py
-import importlib.util as _ilu
-import os as _os
-
-def _load_interfaces():
-    spec = _ilu.spec_from_file_location(
-        "core.interfaces",
-        _os.path.join(_os.path.dirname(__file__), "../../src/core/interfaces.py"),
-    )
-    mod = _ilu.module_from_spec(spec)
-    # Patch sys.modules pour que les imports relatifs fonctionnent
-    import sys
-    sys.modules.setdefault("models", __import__("models"))
-    spec.loader.exec_module(mod)
-    return mod
-
-_iface = _load_interfaces()
-INodeProcessor = _iface.INodeProcessor
-IAnalysisStrategy = _iface.IAnalysisStrategy
-IExportStrategy = _iface.IExportStrategy
+# interfaces.py importe ses modèles via le package prisma — import direct suffit
+from prisma.core.interfaces import (
+    INodeProcessor,
+    IAnalysisStrategy,
+    IExportStrategy,
+)
 
 
 # ===========================================================================

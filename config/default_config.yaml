@@ -117,6 +117,10 @@ transform:
   logicle_M: 4.5       # Décades de l'échelle linéaire
   logicle_W: 0.5       # Décades de la zone de linéarisation
   logicle_A: 0.0       # Décades supplémentaires côté négatif
+  # Transformations par colonne (popup pré-traitement). Prioritaire sur `method`
+  # global si non vide. Format : {nom_canal: {method, cofactor, T, M, W, A}}.
+  # Ex : {CD34: {method: logicle}, SSC-A: {method: arcsinh, cofactor: 150}}
+  per_column_specs: {}
 
 normalize:
   method: "zscore"    # zscore | minmax | none
@@ -318,6 +322,14 @@ performance_monitoring:
 patho_fcs_export:
   enabled: true             # true = générer un FCS restreint à la moelle pathologique avec colonne Is_MRD
   mrd_method: "jf"          # méthode utilisée pour Is_MRD : "flo" (méthode Flo) ou "jf" (méthode JF)
+
+# Paramètres d'export du pipeline RUO (research_executor)
+export_params:
+  annotate_fcs: true              # true = exporter le FCS annoté (FlowSOM_cluster/metacluster + xGrid/yGrid/xNodes/yNodes/size)
+  flowsom_plots: true             # true = générer les visualisations natives FlowSOM (fs.pl.*) si FlowSOM sélectionné
+  flowsom_plot_format: "png"      # format des images natives : png | jpg | svg | pdf | tif
+  flowsom_plot_dpi: 150           # résolution des images natives FlowSOM
+  flowsom_max_marker_plots: 12    # nb max de cartes par marqueur (0 = aucune, limite la saturation disque)
 
 batch:
   enabled: false            # true = traiter chaque FCS du dossier patho individuellement (mode lot)

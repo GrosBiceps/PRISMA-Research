@@ -22,11 +22,11 @@ import pandas as pd
 
 # Imports des modèles canoniques — relatifs dans le package, absolus en fallback
 try:
-    from ..models.sample import Sample
-    from ..models.experiment import Experiment
+    from .models_legacy.sample import Sample
+    from .models_legacy.experiment import Experiment
 except ImportError:
-    from models.sample import Sample  # type: ignore[no-redef]
-    from models.experiment import Experiment  # type: ignore[no-redef]
+    from prisma.core.models_legacy.sample import Sample  # type: ignore[no-redef]
+    from prisma.core.models_legacy.experiment import Experiment  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 

@@ -617,9 +617,8 @@ def _section_figures(styles: dict,
 
     kaleido_missing = not _PLOTLY  # si plotly absent, on ne peut rien faire
     if not kaleido_missing:
-        try:
-            _pio.to_image  # basic check
-        except AttributeError:
+        # Vérifie la présence de l'API d'export d'image (kaleido) sans effet de bord.
+        if not hasattr(_pio, "to_image"):
             kaleido_missing = True
 
     for key in rendered_keys:

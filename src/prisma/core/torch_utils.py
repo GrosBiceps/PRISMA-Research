@@ -28,11 +28,17 @@ from __future__ import annotations
 import gc
 import logging
 import math
+import os
 from typing import Optional, Tuple
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Défensif : si torch_utils est importé hors launch_gui (run_pipeline, tests…),
+# autoriser la coexistence des runtimes OpenMP (Intel libiomp5md vs MS vcomp140)
+# pour éviter WinError 1114 sur c10.dll. Sans effet si torch déjà chargé.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 # ── Détection PyTorch + CUDA au chargement ───────────────────────────────────
 try:

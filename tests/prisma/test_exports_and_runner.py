@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from exports.export_manager import ExportManager
-from exports.heatmaps import build_cohort_export_tables
-from exports.run_serializer import serialize_full_run
+from prisma.exports.export_manager import ExportManager
+from prisma.exports.heatmaps import build_cohort_export_tables
+from prisma.exports.run_serializer import serialize_full_run
 from prisma.core.models import Experiment, RunMetadata, Sample
 from prisma.core.registry import StrategyRegistry
 from prisma.pipeline.base import PipelineContext, PipelineRunner

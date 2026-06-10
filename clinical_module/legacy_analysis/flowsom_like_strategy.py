@@ -31,9 +31,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from models.sample import Sample
-from analysis.downsampling import random_downsample_df, expand_to_full
-from analysis.strategies import BaseAnalysisStrategy, _DOWNSAMPLE_THRESHOLD
+from prisma.core.models_legacy.sample import Sample
+from prisma.analysis.downsampling import random_downsample_df, expand_to_full
+from .strategies import BaseAnalysisStrategy, _DOWNSAMPLE_THRESHOLD
 
 logger = logging.getLogger(__name__)
 

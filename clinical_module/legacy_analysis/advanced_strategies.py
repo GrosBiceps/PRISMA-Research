@@ -17,8 +17,8 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 import numpy as np
 
-from models.experiment import Experiment
-from analysis.batch import (
+from prisma.core.models_legacy.experiment import Experiment
+from .batch import (
     CohortMatrix,
     HarmonyParams,
     build_cohort_matrix,
@@ -28,7 +28,7 @@ from analysis.batch import (
     run_harmony,
     store_experiment_mapping,
 )
-from analysis.trajectory import PHATEParams, run_phate_embedding
+from .trajectory import PHATEParams, run_phate_embedding
 
 logger = logging.getLogger(__name__)
 

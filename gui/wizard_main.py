@@ -744,6 +744,7 @@ class InputQCPage(_BaseStepPage):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         self._gating_workspace_path: Optional[str] = None
         self._available_populations: List[str] = ["Root"]
+        self._preprocessing_specs: dict = {}  # transformations par colonne (popup)
         super().__init__(0, parent)
 
     def _build_selector(self) -> QWidget:
@@ -877,7 +878,62 @@ class InputQCPage(_BaseStepPage):
         row_gate.addWidget(gate_box, 1)
         vl.addLayout(row_gate)
 
+        # ── Pré-traitement (transformation par colonne) ─────────────────────
+        row_pp = QHBoxLayout()
+        row_pp.setSpacing(8)
+        lbl_pp = QLabel("PRÉ-TRAITEMENT")
+        lbl_pp.setObjectName("brandSubtitle")
+        lbl_pp.setFixedWidth(110)
+        row_pp.addWidget(lbl_pp)
+
+        self._btn_preprocessing = QPushButton("⚙  Configurer les transformations (logicle / arcsinh / log)")
+        self._btn_preprocessing.setObjectName("ghostBtn")
+        self._btn_preprocessing.clicked.connect(self._open_preprocessing_dialog)
+        row_pp.addWidget(self._btn_preprocessing, 1)
+
+        self._lbl_pp_status = QLabel("Transformation globale (par défaut)")
+        self._lbl_pp_status.setObjectName("brandSubtitle")
+        self._lbl_pp_status.setFixedWidth(220)
+        row_pp.addWidget(self._lbl_pp_status)
+
+        vl.addLayout(row_pp)
+
         return card
+
+    def _open_preprocessing_dialog(self) -> None:
+        """Ouvre le popup de pré-traitement, pré-rempli avec le 1er FCS du dossier."""
+        from gui.dialogs.preprocessing_dialog import PreprocessingDialog
+        from prisma.io.fcs_reader import get_fcs_files
+
+        fcs_path = None
+        folder = self._drop_fcs.folder
+        if folder:
+            try:
+                files = get_fcs_files(folder)
+                if files:
+                    fcs_path = files[0]
+            except Exception:  # noqa: BLE001
+                fcs_path = None
+        if fcs_path is None:
+            from PyQt5.QtWidgets import QMessageBox
+
+            QMessageBox.warning(
+                self, "Pré-traitement",
+                "Sélectionner d'abord un dossier FCS d'entrée pour lister les canaux.",
+            )
+            return
+
+        dlg = PreprocessingDialog(
+            fcs_path=fcs_path,
+            existing_specs=getattr(self, "_preprocessing_specs", {}),
+            parent=self,
+        )
+        if dlg.exec_():
+            self._preprocessing_specs = dlg.get_specs()
+            n = len(self._preprocessing_specs)
+            self._lbl_pp_status.setText(
+                f"{n} canal(aux) transformé(s)" if n else "Transformation globale (par défaut)"
+            )
 
     def _browse_fcs(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Dossier FCS d'entrée")
@@ -985,6 +1041,11 @@ class InputQCPage(_BaseStepPage):
         else:
             cfg.gating_workspace_path = None
             cfg.target_population = "Root"
+
+        # Transformations par colonne définies dans le popup pré-traitement.
+        specs = getattr(self, "_preprocessing_specs", {}) or {}
+        if specs:
+            cfg.transform.per_column_specs = dict(specs)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

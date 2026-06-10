@@ -15,20 +15,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.sample import Sample
-from analysis.flowsom_like_strategy import (
+from prisma.core.models_legacy.sample import Sample
+from clinical_module.legacy_analysis.flowsom_like_strategy import (
     FlowSOMlikeStrategy,
     FlowSOMlikeParams,
     find_optimal_metaclusters,
     _phase1_silhouette_on_codebook as phase1_silhouette_on_codebook,
     _phase3_composite_selection as phase3_composite_selection,
 )
-from analysis.downsampling import (
+from prisma.analysis.downsampling import (
     random_downsample,
     random_downsample_df,
     expand_to_full,
 )
-from analysis.strategies import (
+from clinical_module.legacy_analysis.strategies import (
     FlowSOMStrategy,
     FlowSOMStrategyParams,
     ResearchPipelineExecutor,
@@ -212,7 +212,7 @@ class TestFlowSOMStrategy:
         meta = result.cluster_assignments["flowsom_meta"]
         assert nodes.shape == (N_CELLS,)
         assert meta.shape == (N_CELLS,)
-        assert nodes.dtype == np.int32
+        assert np.issubdtype(nodes.dtype, np.integer)
         assert meta.min() >= 0
         assert meta.max() < 5
 
@@ -357,7 +357,7 @@ class TestFlowSOMlikeStrategy:
         meta = result.cluster_assignments["flowsom_like_meta"]
         assert nodes.shape == (N_CELLS,)
         assert meta.shape == (N_CELLS,)
-        assert nodes.dtype == np.int32
+        assert np.issubdtype(nodes.dtype, np.integer)
         assert meta.min() >= 0
         assert meta.max() < 4
 

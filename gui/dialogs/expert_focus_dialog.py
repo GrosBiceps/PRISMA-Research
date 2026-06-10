@@ -750,13 +750,13 @@ class ExpertFocusDialog(QDialog):
     def _build_header(self) -> QWidget:
         widget = QWidget()
         widget.setObjectName("efvHeader")
-        widget.setStyleSheet(f"""
-            QWidget#efvHeader {{
+        widget.setStyleSheet("""
+            QWidget#efvHeader {
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
                     stop:0 rgba(36,38,60,0.90), stop:1 rgba(22,24,40,0.85));
                 border-radius: 10px;
                 border: 1px solid rgba(137,180,250,0.15);
-            }}
+            }
         """)
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(18, 14, 18, 14)
@@ -908,12 +908,12 @@ class ExpertFocusDialog(QDialog):
     def _build_footer(self) -> QWidget:
         widget = QWidget()
         widget.setObjectName("efvFooter")
-        widget.setStyleSheet(f"""
-            QWidget#efvFooter {{
+        widget.setStyleSheet("""
+            QWidget#efvFooter {
                 background: rgba(24,24,37,0.85);
                 border-radius: 8px;
                 border: 1px solid rgba(137,180,250,0.12);
-            }}
+            }
         """)
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(16, 10, 16, 10)
@@ -1093,9 +1093,10 @@ class ExpertFocusDialog(QDialog):
 
     def _schedule_radar_batch(self, cards: List, batch_size: int = 8, delay_ms: int = 0) -> None:
         """Obsolète — conservé pour compatibilité, délègue au nouveau pump."""
-        pass
-
-        QTimer.singleShot(delay_ms, _load_batch)
+        # Ancienne ligne `QTimer.singleShot(delay_ms, _load_batch)` retirée :
+        # _load_batch n'existe pas (NameError si atteinte). Le batching radar
+        # passe désormais par _pump_radar_batch().
+        return
 
     def _on_filter_changed(self, idx: int) -> None:
         self._active_filter_idx = idx

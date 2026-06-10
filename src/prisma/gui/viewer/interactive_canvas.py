@@ -567,7 +567,6 @@ class InteractiveGatingCanvas(pg.PlotWidget):
         x_width = x_max - x_min
         y_height = y_max - y_min
 
-        from PyQt5.QtCore import QRectF
         item.setRect(QRectF(x_min, y_min, x_width, y_height))
 
         self._density_image = item

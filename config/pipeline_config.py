@@ -147,6 +147,14 @@ class TransformConfig:
     method: str = DEFAULT_TRANSFORM_METHOD
     cofactor: float = DEFAULT_ARCSINH_COFACTOR
     apply_to_scatter: bool = False
+    # Paramètres logicle globaux (utilisés si method == "logicle")
+    logicle_T: float = 262144.0
+    logicle_M: float = 4.5
+    logicle_W: float = 0.5
+    logicle_A: float = 0.0
+    # Transformations par colonne (priorité sur method global si non vide).
+    # Format : {nom_colonne: {"method","cofactor","T","M","W","A"}}
+    per_column_specs: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -543,7 +551,11 @@ class PipelineConfig:
                 setattr(cfg.auto_clustering, attr, ac[attr])
 
         tr = raw.get("transform", {})
-        for attr in ("method", "cofactor", "apply_to_scatter"):
+        for attr in (
+            "method", "cofactor", "apply_to_scatter",
+            "logicle_T", "logicle_M", "logicle_W", "logicle_A",
+            "per_column_specs",
+        ):
             if attr in tr:
                 setattr(cfg.transform, attr, tr[attr])
 

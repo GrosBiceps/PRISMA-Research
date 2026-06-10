@@ -29,7 +29,7 @@ import numpy as np
 _logger = logging.getLogger("core.auto_gating")
 _rng = np.random.default_rng(seed=42)
 
-from ..models.gate_result import (
+from .models_legacy.gate_result import (
     GateResult,
     gating_reports,
     gating_log_entries,

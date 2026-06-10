@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from flowsom_pipeline_pro.src.analysis.mrd_calculator import (
+from clinical_module.mrd.mrd_calculator import (
     MRDConfig,
     MRDMethodJF,
     MRDMethodFlo,
@@ -70,7 +70,7 @@ class TestMRDMethodJF:
         cfg = _make_config(method="jf")
         result = compute_mrd(df, clustering, cfg)
         # MRD positive attendue
-        assert result.mrd_positive_jf, "Un cluster 100% patho doit être MRD JF"
+        assert result.n_nodes_mrd_jf > 0, "Un cluster 100% patho doit être MRD JF"
 
     def test_pure_normal_node_not_mrd(self):
         """Dataset avec seulement des cellules saines → MRD négative."""
@@ -78,7 +78,7 @@ class TestMRDMethodJF:
         clustering = np.zeros(500, dtype=int)
         cfg = _make_config(method="jf")
         result = compute_mrd(df, clustering, cfg)
-        assert not result.mrd_positive_jf, "Un dataset 100% sain ne doit pas être MRD"
+        assert result.n_nodes_mrd_jf == 0, "Un dataset 100% sain ne doit pas être MRD"
 
     def test_mrd_percentage_is_within_bounds(self):
         df, clustering = _make_df_and_clustering(n_sain=1000, n_patho=50)
@@ -99,7 +99,7 @@ class TestMRDMethodFlo:
         df, clustering = _make_df_and_clustering(n_sain=5, n_patho=100)
         cfg = _make_config(method="flo")
         result = compute_mrd(df, clustering, cfg)
-        assert result.mrd_positive_flo
+        assert result.n_nodes_mrd_flo > 0
 
     def test_low_ratio_is_not_mrd(self):
         """
@@ -109,7 +109,7 @@ class TestMRDMethodFlo:
         df, clustering = _make_df_and_clustering(n_sain=100, n_patho=5)
         cfg = _make_config(method="flo")
         result = compute_mrd(df, clustering, cfg)
-        assert not result.mrd_positive_flo
+        assert result.n_nodes_mrd_flo == 0
 
     def test_mrd_pct_flo_non_negative(self):
         df, clustering = _make_df_and_clustering(n_sain=500, n_patho=50)
@@ -130,7 +130,7 @@ class TestMRDMethodELN:
         df, clustering = _make_df_and_clustering(n_sain=910, n_patho=100)
         cfg = _make_config(method="eln")
         result = compute_mrd(df, clustering, cfg)
-        assert result.mrd_positive_eln
+        assert result.eln_positive
 
     def test_loq_not_met_node_excluded(self):
         """
@@ -143,16 +143,16 @@ class TestMRDMethodELN:
 
         df, clustering = _make_df_and_clustering(n_sain=500, n_patho=3)
         result = compute_mrd(df, clustering, cfg)
-        assert not result.mrd_positive_eln, "LOQ non atteint → nœud doit être exclu"
+        assert not result.eln_positive, "LOQ non atteint → nœud doit être exclu"
 
     def test_below_clinical_threshold_not_positive(self):
-        """MRD détectable mais < 0.1% (seuil ELN) → mrd_positive_eln = False."""
+        """MRD détectable mais < 0.1% (seuil ELN) → eln_positive = False."""
         cfg = _make_config(method="eln")
         cfg.eln_standards.clinical_positivity_pct = 0.1
         # 1 patho sur 10000 total = 0.01% → sous le seuil
         df, clustering = _make_df_and_clustering(n_sain=9999, n_patho=1)
         result = compute_mrd(df, clustering, cfg)
-        assert not result.mrd_positive_eln
+        assert not result.eln_positive
 
 
 # ── Cas limites ───────────────────────────────────────────────────────────────
@@ -174,16 +174,16 @@ class TestMRDEdgeCases:
         clustering = np.zeros(200, dtype=int)
         cfg = _make_config()
         result = compute_mrd(df, clustering, cfg)
-        assert result.mrd_pct_jf == 0.0 or not result.mrd_positive_jf
-        assert result.mrd_pct_flo == 0.0 or not result.mrd_positive_flo
-        assert result.mrd_pct_eln == 0.0 or not result.mrd_positive_eln
+        assert result.mrd_pct_jf == 0.0 or result.n_nodes_mrd_jf == 0
+        assert result.mrd_pct_flo == 0.0 or result.n_nodes_mrd_flo == 0
+        assert result.mrd_pct_eln == 0.0 or not result.eln_positive
 
     def test_result_has_required_attributes(self):
         df, clustering = _make_df_and_clustering(n_sain=100, n_patho=10)
         cfg = _make_config()
         result = compute_mrd(df, clustering, cfg)
         for attr in ("mrd_pct_jf", "mrd_pct_flo", "mrd_pct_eln",
-                     "mrd_positive_jf", "mrd_positive_flo", "mrd_positive_eln"):
+                     "n_nodes_mrd_jf", "n_nodes_mrd_flo", "eln_positive"):
             assert hasattr(result, attr), f"MRDResult doit avoir l'attribut '{attr}'"
 
     def test_mrd_percentages_are_finite(self):

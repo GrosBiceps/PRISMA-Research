@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from analysis.advanced_strategies import (
+from clinical_module.legacy_analysis.advanced_strategies import (
     AdvancedCohortExecutor,
     HarmonyStrategy,
     HarmonyStrategyParams,
@@ -19,8 +19,8 @@ from analysis.advanced_strategies import (
     run_advanced_cohort_from_config,
 )
 from config.pipeline_config import PipelineConfig
-from models.experiment import Experiment
-from models.sample import Sample
+from prisma.core.models_legacy.experiment import Experiment
+from prisma.core.models_legacy.sample import Sample
 
 
 def _make_sample(sample_id: str, shift: float, seed: int) -> Sample:

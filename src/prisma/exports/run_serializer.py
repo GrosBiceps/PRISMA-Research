@@ -85,13 +85,13 @@ def serialize_full_run(
     }
 
     if "global" not in bundle["seeds"] and hasattr(run_metadata, "seed"):
-        bundle["seeds"]["global"] = int(getattr(run_metadata, "seed"))
+        bundle["seeds"]["global"] = int(run_metadata.seed)
 
     if extra_payload:
         bundle["extra"] = _to_jsonable(dict(extra_payload))
 
-    if hasattr(run_metadata, "artifacts") and isinstance(getattr(run_metadata, "artifacts"), list):
-        existing = set(str(p) for p in getattr(run_metadata, "artifacts"))
+    if hasattr(run_metadata, "artifacts") and isinstance(run_metadata.artifacts, list):
+        existing = set(str(p) for p in run_metadata.artifacts)
         existing.update(artifact_list)
         run_metadata.artifacts = sorted(existing)
 

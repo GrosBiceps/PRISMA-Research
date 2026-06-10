@@ -141,7 +141,7 @@ class PipelineResult:
                 )
 
         if self.output_files:
-            lines.append(f"\n  Fichiers exportés:")
+            lines.append("\n  Fichiers exportés:")
             for key, path in self.output_files.items():
                 lines.append(f"    {key}: {path}")
 

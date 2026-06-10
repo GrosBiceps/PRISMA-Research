@@ -73,9 +73,11 @@ class _ScatterCapture:
     last_x = None
     last_y = None
 
-    def __init__(self, x, y, size, pen, brush) -> None:
-        _ScatterCapture.last_x = x
-        _ScatterCapture.last_y = y
+    def __init__(self, *args, **kwargs) -> None:
+        # Capture x/y quel que soit le passage (positionnel ou nommé) ;
+        # tolère les kwargs additionnels (symbol, pxMode…) du vrai ScatterPlotItem.
+        _ScatterCapture.last_x = kwargs.get("x", args[0] if len(args) > 0 else None)
+        _ScatterCapture.last_y = kwargs.get("y", args[1] if len(args) > 1 else None)
 
 
 class _DummyEngine:
@@ -100,6 +102,9 @@ class _DummyEngine:
     def get_children(self, gate_name, gate_path=None):
         return []
 
+    def get_channel_marker_mapping(self, sample_id=None):
+        return {"FL1-A": "CD45", "FL2-A": "CD34"}
+
 
 def test_set_data_2d_accepts_n_by_1_arrays(monkeypatch) -> None:
     """Non-régression: un channel retourné en (N,1) doit être aplati en (N,)."""
@@ -110,14 +115,23 @@ def test_set_data_2d_accepts_n_by_1_arrays(monkeypatch) -> None:
     canvas = ic_mod.InteractiveGatingCanvas.__new__(ic_mod.InteractiveGatingCanvas)
     canvas._x_channel = ""
     canvas._y_channel = ""
+    canvas._x_label = ""
+    canvas._y_label = ""
     canvas._xdata = np.array([])
     canvas._ydata = np.array([])
     canvas._scatter = None
     canvas.clear_data = lambda: None
     canvas.addItem = lambda _item: None
     canvas.setLabel = lambda *_args, **_kwargs: None
+    # getPlotItem() retourne un PlotItem réel sur Qt ; ici on stub setLabel.
+    canvas.getPlotItem = lambda: SimpleNamespace(setLabel=lambda *_a, **_k: None)
     canvas.autoRange = lambda: None
     canvas._compute_density_colors = lambda x, y: [None] * len(x)
+    # Stubs des effets de bord déclenchés par axes_changed ("" → "X"/"Y") :
+    # ces méthodes touchent l'état Qt non initialisé (instance via __new__).
+    canvas.clear_gate_overlays = lambda: None
+    canvas._cancel_current_drawing = lambda: None
+    canvas.invalidate_render_cache = lambda: None
 
     x = np.arange(10, dtype=np.float32)
     y = np.arange(10, dtype=np.float32) * 2.0
@@ -146,10 +160,17 @@ def test_refresh_canvas_keeps_active_population_on_axis_change() -> None:
 
     ws._chk_density = _DummyCheck(False)
     ws._chk_overlay = _DummyCheck(False)
+    ws._chk_enable_comp = _DummyCheck(False)
 
     ws._current_gate_node = ("Lymphocytes", "root")
     ws._show_error = lambda _msg: (_ for _ in ()).throw(AssertionError("Unexpected UI error"))
     ws._show_overlay_children = lambda *_args, **_kwargs: None
+    ws._update_statistics = lambda: None
+
+    # État interne touché par _refresh_canvas (instance via __new__).
+    ws._active_transform_id = None
+    ws._last_canvas_axes = None
+    ws._has_active_panel = lambda: True
 
     # Utilise les helpers réels de la classe.
     ws._current_sample_id = lambda: "sample_1"
@@ -175,6 +196,12 @@ def test_apply_spillover_matrix_adds_comp_matrix(monkeypatch) -> None:
             self.added.append((matrix_id, matrix))
 
     class _FakeSample:
+        # Étiquettes/indices fluo nécessaires à la construction fk.Matrix
+        # (detectors=pnn, fluorochromes=pns sur les canaux fluorescents).
+        pnn_labels = ["FSC-A", "FL1-A", "FL2-A"]
+        pns_labels = ["FSC", "CD45", "CD34"]
+        fluoro_indices = [1, 2]
+
         def get_metadata(self):
             return {"$SPILL": "spill-raw-content"}
 
@@ -184,8 +211,10 @@ def test_apply_spillover_matrix_adds_comp_matrix(monkeypatch) -> None:
 
     class _FakeFk:
         class Matrix:
-            def __init__(self, raw):
+            def __init__(self, raw, detectors=None, fluorochromes=None):
                 self.raw = raw
+                self.detectors = detectors
+                self.fluorochromes = fluorochromes
 
     fake_session = _FakeSession()
 
@@ -209,8 +238,12 @@ def test_apply_spillover_matrix_adds_comp_matrix(monkeypatch) -> None:
     assert engine._comp_matrix_ids == ["spill_sample_a"]
     assert len(fake_session.added) == 1
     assert fake_session.added[0][0] == "spill_sample_a"
-    assert isinstance(fake_session.added[0][1], _FakeFk.Matrix)
-    assert fake_session.added[0][1].raw == "spill-raw-content"
+    matrix = fake_session.added[0][1]
+    assert isinstance(matrix, _FakeFk.Matrix)
+    assert matrix.raw == "spill-raw-content"
+    # detectors/fluorochromes construits depuis les canaux fluo (indices 1,2)
+    assert matrix.detectors == ["FL1-A", "FL2-A"]
+    assert matrix.fluorochromes == ["CD45", "CD34"]
 
 
 def test_normalize_dataframe_channels_prefers_pnn_tuple_first_element() -> None:

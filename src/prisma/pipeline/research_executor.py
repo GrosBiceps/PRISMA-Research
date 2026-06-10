@@ -158,7 +158,7 @@ class ResearchPipelineExecutor:
         )
 
         data_matrix = data_df[marker_columns].to_numpy(dtype=np.float32, copy=True)
-        data_matrix = self._apply_basic_preprocessing(data_matrix, cfg)
+        data_matrix = self._apply_basic_preprocessing(data_matrix, cfg, marker_columns)
 
         _progress(ResearchRunStep.QC)
         qc_method = str(getattr(cfg, "qc_method", "peacoqc"))
@@ -182,8 +182,10 @@ class ResearchPipelineExecutor:
                 params_dict = {k: getattr(params, k) for k in vars(params)} \
                     if hasattr(params, "__dataclass_fields__") else dict(vars(params))
 
-                def _run_dimred(data, **kw):
-                    return self.fit_transform(data, strategy_name, params)
+                # Bind explicite (défaut) : évite la capture tardive de la variable
+                # de boucle si get_or_compute différait l'appel.
+                def _run_dimred(data, _sn=strategy_name, _p=params, **kw):
+                    return self.fit_transform(data, _sn, _p)
 
                 embedding = get_or_compute(
                     data_matrix, params_dict, _run_dimred, tag=strategy_name
@@ -200,18 +202,48 @@ class ResearchPipelineExecutor:
             default=["flowsom"],
         )
         cluster_outputs: Dict[str, np.ndarray] = {}
+        # Clusterer FlowSOM retenu pour l'enrichissement FCS (grille SOM + MST).
+        # Aligne la sortie RUO sur la pipeline de référence : FlowSOM_cluster,
+        # FlowSOM_metacluster, xGrid, yGrid, xNodes, yNodes, size.
+        flowsom_clusterer: Optional[Any] = None
+        # Résultat de l'auto-clustering (best_k + scores) pour le graphique.
+        auto_cluster_result: Optional[Dict[str, Any]] = None
         for method in clustering_methods:
             strategy_name = self._map_clustering_name(method)
             params = self._build_cluster_params(strategy_name, cfg, wizard_cfg)
             log.info("[RUO] Clustering -> %s", strategy_name)
             try:
+                # Cas FlowSOM : on utilise FlowSOMClusterer directement (comme la
+                # pipeline de référence) pour disposer de node_assignments_,
+                # metacluster_map_, grille SOM et layout MST — indispensables aux
+                # colonnes FlowSOM_*/xGrid/yGrid/xNodes/yNodes du FCS exporté.
+                if strategy_name == "flowsom":
+                    # Auto-sélection du nombre de métaclusters (3 phases :
+                    # silhouette codebook → stabilité bootstrap → score composite).
+                    if bool(getattr(cfg.auto_clustering, "enabled", False)):
+                        auto_cluster_result = self._auto_select_k(data_matrix, params, cfg)
+                        if auto_cluster_result:
+                            best_k = int(auto_cluster_result["best_k"])
+                            log.info("[RUO] Auto-clustering : k optimal = %d", best_k)
+                            params.n_metaclusters = best_k
+                    fs_clust = self._fit_flowsom_clusterer(
+                        data_matrix, params, cfg, marker_names=marker_columns
+                    )
+                    flowsom_clusterer = fs_clust
+                    # Label "métacluster par cellule" (cohérent avec les autres méthodes)
+                    cluster_outputs[method] = np.asarray(
+                        fs_clust.metacluster_assignments_, dtype=np.int32
+                    )
+                    continue
+
                 from prisma.cache.embedding_cache import get_or_compute
 
                 params_dict = {k: getattr(params, k) for k in vars(params)} \
                     if hasattr(params, "__dataclass_fields__") else dict(vars(params))
 
-                def _run_cluster(data, **kw):
-                    return self.fit_predict(data, strategy_name, params)
+                # Bind explicite (défaut) : même protection que _run_dimred.
+                def _run_cluster(data, _sn=strategy_name, _p=params, **kw):
+                    return self.fit_predict(data, _sn, _p)
 
                 labels = get_or_compute(
                     data_matrix, params_dict, _run_cluster, tag=strategy_name
@@ -227,7 +259,8 @@ class ResearchPipelineExecutor:
 
         _progress(ResearchRunStep.EXPORT)
         final_df = self._build_output_dataframe(
-            data_df, marker_columns, dimred_outputs, cluster_outputs
+            data_df, marker_columns, dimred_outputs, cluster_outputs,
+            flowsom_clusterer=flowsom_clusterer,
         )
         output_dir = Path(getattr(cfg.paths, "output_dir", "Results"))
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -271,8 +304,33 @@ class ResearchPipelineExecutor:
             if export_to_fcs_kaluza(final_df, fcs_path):
                 output_files["fcs"] = str(fcs_path)
 
+        # Visualisations natives FlowSOM (star charts MST/grille, marqueurs,
+        # numéros, synthèse) — uniquement si un clusterer FlowSOM est disponible.
+        if flowsom_clusterer is not None and bool(export_cfg.get("flowsom_plots", True)):
+            plots = self._generate_flowsom_native_plots(
+                flowsom_clusterer, output_dir, marker_columns, export_cfg
+            )
+            output_files.update(plots)
+
+        # Graphique des métriques d'auto-clustering (silhouette / stabilité /
+        # composite) avec marquage du k optimal retenu.
+        if auto_cluster_result is not None:
+            opt_path = self._plot_auto_cluster_metrics(
+                auto_cluster_result, output_dir, cfg, export_cfg
+            )
+            if opt_path:
+                output_files["auto_clustering_metrics"] = opt_path
+
+        # n_nodes : dimensions réelles du SOM entraîné (peut différer de la config
+        # après compute_optimal_grid). Fallback config si pas de clusterer.
+        if flowsom_clusterer is not None:
+            n_nodes_eff = int(flowsom_clusterer.n_nodes)
+        else:
+            n_nodes_eff = int(
+                getattr(cfg.flowsom, "xdim", 0) * getattr(cfg.flowsom, "ydim", 0)
+            )
         cluster_metrics = ClusteringMetrics(
-            n_nodes=int(getattr(cfg.flowsom, "xdim", 0) * getattr(cfg.flowsom, "ydim", 0)),
+            n_nodes=n_nodes_eff,
             n_metaclusters=int(
                 max((np.unique(v).size for v in cluster_outputs.values()), default=0)
             ),
@@ -504,14 +562,31 @@ class ResearchPipelineExecutor:
         return pd.concat(frames, axis=0, ignore_index=True)
 
     @staticmethod
-    def _apply_basic_preprocessing(matrix: np.ndarray, cfg: Any) -> np.ndarray:
+    def _apply_basic_preprocessing(
+        matrix: np.ndarray, cfg: Any, var_names: Optional[List[str]] = None
+    ) -> np.ndarray:
         x = np.asarray(matrix, dtype=np.float32)
-        method = str(getattr(cfg.transform, "method", "none")).lower()
-        if method == "arcsinh":
-            cofactor = float(getattr(cfg.transform, "cofactor", 5.0) or 5.0)
-            x = np.arcsinh(x / max(cofactor, 1e-6)).astype(np.float32)
-        elif method == "log10":
-            x = np.log10(np.clip(x, a_min=1e-6, a_max=None)).astype(np.float32)
+
+        # Priorité 1 : transformations par colonne (popup pré-traitement).
+        per_col = dict(getattr(cfg.transform, "per_column_specs", {}) or {})
+        if per_col and var_names is not None:
+            from prisma.core.transformers import DataTransformer
+
+            x = DataTransformer.apply_per_column_transforms(x, list(var_names), per_col)
+            log.info("[RUO] Pré-traitement par colonne appliqué (%d colonnes spécifiées)", len(per_col))
+        else:
+            # Priorité 2 : transformation globale (method commun à tous les canaux fluo).
+            method = str(getattr(cfg.transform, "method", "none")).lower()
+            if method in ("arcsinh", "logicle", "log10", "log") and method != "none":
+                from prisma.core.transformers import DataTransformer
+
+                x = DataTransformer.apply(
+                    x,
+                    method=method,
+                    cofactor=float(getattr(cfg.transform, "cofactor", 5.0) or 5.0),
+                    var_names=list(var_names) if var_names is not None else None,
+                    apply_to_scatter=bool(getattr(cfg.transform, "apply_to_scatter", False)),
+                ).astype(np.float32)
 
         norm = str(getattr(cfg.normalize, "method", "none")).lower()
         if norm == "zscore":
@@ -684,12 +759,13 @@ class ResearchPipelineExecutor:
             extra=raw,
         )
 
-    @staticmethod
     def _build_output_dataframe(
+        self,
         data_df: pd.DataFrame,
         marker_columns: List[str],
         dimred_outputs: Dict[str, np.ndarray],
         cluster_outputs: Dict[str, np.ndarray],
+        flowsom_clusterer: Optional[Any] = None,
     ) -> pd.DataFrame:
         out = data_df.copy()
         for method, emb in dimred_outputs.items():
@@ -703,10 +779,259 @@ class ResearchPipelineExecutor:
         for method, labels in cluster_outputs.items():
             out[f"cluster_{method}"] = np.asarray(labels, dtype=np.int32)
 
+        # Enrichissement FlowSOM : reproduit les colonnes de la pipeline de
+        # référence (FlowSOM_cluster, FlowSOM_metacluster 1-based + xGrid/yGrid
+        # grille SOM et xNodes/yNodes MST, avec jitter circulaire + size).
+        if flowsom_clusterer is not None:
+            self._add_flowsom_columns(out, flowsom_clusterer)
+
         # Le FCS export requiert des colonnes numériques ; __sample__ reste pour CSV/traçabilité.
         for col in marker_columns:
             out[col] = pd.to_numeric(out[col], errors="coerce")
         return out
+
+    @staticmethod
+    def _fit_flowsom_clusterer(
+        data_matrix: np.ndarray,
+        params: Any,
+        cfg: Any,
+        marker_names: Optional[List[str]] = None,
+    ) -> Any:
+        """Entraîne un FlowSOMClusterer (grille SOM + MST) et l'expose pour l'export.
+
+        Utilise le clusterer de bas niveau (et non la stratégie générique) afin
+        d'accéder à node_assignments_, metacluster_map_, get_grid_coords() et
+        get_layout_coords() — nécessaires aux colonnes FCS FlowSOM_*/xGrid/yGrid/
+        xNodes/yNodes, à l'identique de la pipeline de référence.
+
+        marker_names est transmis au fit : requis pour les visualisations natives
+        par marqueur (fs.pl.plot_marker) et pour new_data()/subset().
+        """
+        from prisma.core.clustering import FlowSOMClusterer
+
+        use_gpu = bool(getattr(cfg.flowsom, "use_gpu", True))
+        clusterer = FlowSOMClusterer(
+            xdim=int(getattr(params, "xdim", 10)),
+            ydim=int(getattr(params, "ydim", 10)),
+            n_metaclusters=int(getattr(params, "n_metaclusters", 20)),
+            rlen=getattr(params, "rlen", "auto"),
+            seed=int(getattr(params, "seed", 42)),
+            use_gpu=use_gpu,
+        )
+        clusterer.fit(
+            np.asarray(data_matrix, dtype=np.float32),
+            marker_names=marker_names,
+        )
+        return clusterer
+
+    @staticmethod
+    def _auto_select_k(
+        data_matrix: np.ndarray, params: Any, cfg: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Auto-sélection du nombre de métaclusters (3 phases) + scores.
+
+        Délègue à ``find_optimal_clusters_with_scores`` (silhouette codebook →
+        stabilité bootstrap → score composite). Les paramètres proviennent de
+        ``cfg.auto_clustering``. Retourne le dict complet (best_k + métriques)
+        ou None en cas d'échec (le pipeline retombe sur le k configuré).
+        """
+        try:
+            from prisma.core.metaclustering import find_optimal_clusters_with_scores
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[RUO] Auto-clustering indisponible : %s", exc)
+            return None
+
+        ac = cfg.auto_clustering
+        try:
+            return find_optimal_clusters_with_scores(
+                np.asarray(data_matrix, dtype=np.float32),
+                min_clusters=int(getattr(ac, "min_clusters", 5)),
+                max_clusters=int(getattr(ac, "max_clusters", 20)),
+                n_bootstrap=int(getattr(ac, "n_bootstrap", 10)),
+                sample_size_bootstrap=int(getattr(ac, "sample_size_bootstrap", 20000)),
+                min_stability_threshold=float(getattr(ac, "min_stability_threshold", 0.75)),
+                weight_stability=float(getattr(ac, "weight_stability", 0.65)),
+                weight_silhouette=float(getattr(ac, "weight_silhouette", 0.35)),
+                xdim=int(getattr(params, "xdim", 10)),
+                ydim=int(getattr(params, "ydim", 10)),
+                seed=int(getattr(params, "seed", 42)),
+                verbose=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[RUO] Auto-clustering échoué : %s", exc)
+            return None
+
+    @staticmethod
+    def _plot_auto_cluster_metrics(
+        auto_result: Dict[str, Any],
+        output_dir: Path,
+        cfg: Any,
+        export_cfg: Dict[str, Any],
+    ) -> Optional[str]:
+        """Trace les métriques d'auto-clustering (silhouette/stabilité/composite).
+
+        3 panneaux avec marquage du k optimal, via ``plot_optimization_results``.
+        """
+        try:
+            from prisma.visualization.flowsom_plots import plot_optimization_results
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[RUO] Graphique auto-clustering indisponible : %s", exc)
+            return None
+
+        fmt = str(export_cfg.get("flowsom_plot_format", "png")).lstrip(".")
+        ac = cfg.auto_clustering
+        out_path = output_dir / "flowsom_plots" / f"auto_clustering_metrics.{fmt}"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fig = plot_optimization_results(
+                results_df=auto_result["results_df"],
+                best_k=int(auto_result["best_k"]),
+                stability_results=auto_result.get("stability_results"),
+                w_stability=float(getattr(ac, "weight_stability", 0.65)),
+                w_silhouette=float(getattr(ac, "weight_silhouette", 0.35)),
+                min_stability_threshold=float(getattr(ac, "min_stability_threshold", 0.75)),
+                output_path=out_path,
+            )
+            if fig is not None and out_path.exists():
+                log.info("[RUO] Graphique métriques auto-clustering : %s", out_path)
+                return str(out_path)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[RUO] Échec graphique auto-clustering : %s", exc)
+        return None
+
+    @staticmethod
+    def _circular_jitter(
+        n_points: int,
+        cluster_ids: np.ndarray,
+        node_sizes: np.ndarray,
+        max_radius: float = 0.45,
+        min_radius: float = 0.1,
+        seed: int = 42,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Jitter circulaire style FlowSOM R (rayon fonction de la taille du node).
+
+        sqrt(u) garantit une distribution uniforme dans le disque. Identique à
+        la pipeline de référence pour des sorties superposables.
+        """
+        rng = np.random.default_rng(seed)
+        theta = rng.uniform(0, 2 * np.pi, n_points)
+        u = rng.uniform(0, 1, n_points)
+        max_size = node_sizes.max() if node_sizes.max() > 0 else 1.0
+        radii = min_radius + (max_radius - min_radius) * np.sqrt(
+            node_sizes[cluster_ids.astype(int)] / max_size
+        )
+        r = np.sqrt(u) * radii
+        return (r * np.cos(theta)).astype(np.float32), (r * np.sin(theta)).astype(np.float32)
+
+    def _add_flowsom_columns(self, out: pd.DataFrame, clusterer: Any) -> None:
+        """Ajoute les colonnes FlowSOM (cluster/metacluster/grille/MST) au DataFrame.
+
+        Reproduit `_build_fcs_dataframe` de la pipeline de référence :
+          - FlowSOM_cluster      : node SOM 1-based (Kaluza ≥ 1)
+          - FlowSOM_metacluster  : métacluster 1-based
+          - xGrid, yGrid         : grille SOM + jitter circulaire, min = 1
+          - xNodes, yNodes       : layout MST + jitter circulaire, min = 1
+          - size                 : nombre de cellules du node
+        """
+        node_assign = getattr(clusterer, "node_assignments_", None)
+        if node_assign is None:
+            log.warning("[RUO] FlowSOM sans node_assignments_ — colonnes FCS topologiques ignorées")
+            return
+
+        cl_int = np.asarray(node_assign, dtype=int)
+        n_cells = cl_int.shape[0]
+
+        # Métacluster par cellule : via metacluster_map_ (node→meta) si dispo,
+        # sinon metacluster_assignments_ (cell→meta) directement.
+        mc_map = getattr(clusterer, "metacluster_map_", None)
+        if mc_map is not None:
+            mc_per_cell = np.asarray(mc_map, dtype=int)[cl_int]
+        else:
+            mc_per_cell = np.asarray(
+                getattr(clusterer, "metacluster_assignments_"), dtype=int
+            )
+
+        node_sizes = clusterer.get_node_sizes()
+
+        # — Grille SOM + jitter (min = 1, comme le monolithe de référence) —
+        grid_coords = clusterer.get_grid_coords()  # (n_nodes, 2)
+        xg = grid_coords[cl_int, 0].astype(np.float32)
+        yg = grid_coords[cl_int, 1].astype(np.float32)
+        jx, jy = self._circular_jitter(n_cells, cl_int, node_sizes, 0.45, 0.1)
+        xg = (xg + jx); yg = (yg + jy)
+        xGrid = xg - xg.min() + 1.0
+        yGrid = yg - yg.min() + 1.0
+
+        # — Layout MST + jitter (échelle relative à la grille) —
+        layout = clusterer.get_layout_coords()  # (n_nodes, 2)
+        x_ptp = float(layout[:, 0].max() - layout[:, 0].min()) or 1.0
+        y_ptp = float(layout[:, 1].max() - layout[:, 1].min()) or 1.0
+        mst_scale = min(x_ptp, y_ptp) / (clusterer.xdim * 2)
+        xn = layout[cl_int, 0].astype(np.float32)
+        yn = layout[cl_int, 1].astype(np.float32)
+        mjx, mjy = self._circular_jitter(
+            n_cells, cl_int, node_sizes, mst_scale * 0.8, mst_scale * 0.2
+        )
+        xn = (xn + mjx); yn = (yn + mjy)
+        xNodes = xn - xn.min() + 1.0
+        yNodes = yn - yn.min() + 1.0
+
+        out["FlowSOM_cluster"] = (cl_int + 1).astype(np.float32)
+        out["FlowSOM_metacluster"] = (mc_per_cell + 1).astype(np.float32)
+        out["xGrid"] = xGrid.astype(np.float32)
+        out["yGrid"] = yGrid.astype(np.float32)
+        out["xNodes"] = xNodes.astype(np.float32)
+        out["yNodes"] = yNodes.astype(np.float32)
+        out["size"] = node_sizes[cl_int].astype(np.float32)
+        log.info(
+            "[RUO] Colonnes FlowSOM ajoutées — xGrid[%.2f-%.2f] yGrid[%.2f-%.2f] "
+            "xNodes[%.2f-%.2f] yNodes[%.2f-%.2f]",
+            xGrid.min(), xGrid.max(), yGrid.min(), yGrid.max(),
+            xNodes.min(), xNodes.max(), yNodes.min(), yNodes.max(),
+        )
+
+    @staticmethod
+    def _generate_flowsom_native_plots(
+        clusterer: Any,
+        output_dir: Path,
+        marker_columns: List[str],
+        export_cfg: Dict[str, Any],
+    ) -> Dict[str, str]:
+        """Génère les visualisations natives FlowSOM (fs.pl.*) dans un sous-dossier.
+
+        Produit star charts (MST + grille), cartes par marqueur, numéros de
+        nœuds/métaclusters et planche de synthèse — au format configuré.
+        Sans effet (et sans erreur) si le backend n'est pas le FlowSOM natif.
+        """
+        plots: Dict[str, str] = {}
+        try:
+            from prisma.visualization.flowsom_native_plots import generate_all_native_plots
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[RUO] Module de visualisation FlowSOM indisponible : %s", exc)
+            return plots
+
+        fmt = str(export_cfg.get("flowsom_plot_format", "png")).lstrip(".")
+        dpi = int(export_cfg.get("flowsom_plot_dpi", 150))
+        # Limiter les cartes par marqueur pour ne pas saturer (configurable).
+        max_marker_plots = int(export_cfg.get("flowsom_max_marker_plots", 12))
+        markers_subset = marker_columns[:max_marker_plots] if max_marker_plots > 0 else None
+
+        plots_dir = output_dir / "flowsom_plots"
+        try:
+            produced = generate_all_native_plots(
+                clusterer,
+                plots_dir,
+                marker_names=markers_subset,
+                fmt=fmt,
+                dpi=dpi,
+            )
+            # Préfixer les clés pour le manifeste output_files.
+            for key, path in produced.items():
+                plots[f"flowsom_plot_{key}"] = path
+            log.info("[RUO] %d visualisations FlowSOM natives générées.", len(produced))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[RUO] Génération des visualisations FlowSOM échouée : %s", exc)
+        return plots
 
     @staticmethod
     def _coerce_dimreduc_params(params: DimReducParams | ClusterParams) -> DimReducParams:

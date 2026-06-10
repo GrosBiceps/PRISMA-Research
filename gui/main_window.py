@@ -19,6 +19,7 @@ Design :
 from __future__ import annotations
 
 import json
+import logging
 import multiprocessing
 import os
 import shutil
@@ -27,6 +28,11 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+# Logger module pour les handlers d'exception (diagnostic non bloquant).
+# Sans cette définition, les `_logger.warning(...)` dans les except levaient
+# un NameError masquant l'erreur réelle.
+_logger = logging.getLogger("prisma.main_window")
 
 if TYPE_CHECKING:
     from config.pipeline_config import PipelineConfig
@@ -4086,9 +4092,9 @@ class FlowSomAnalyzerPro(QMainWindow):
             title = "✓ Pré-screening CD34+/CD45dim — Normal"
 
         lines = [
-            f"<b>Pré-screening CD34+ / CD45dim</b><br>",
+            "<b>Pré-screening CD34+ / CD45dim</b><br>",
             f"<b>Méthode de référence :</b> {method_used}<br>",
-            f"<table style='border-collapse:collapse; width:100%;'>",
+            "<table style='border-collapse:collapse; width:100%;'>",
             f"<tr><td style='padding:3px 8px;'><b>Cellules CD45dim :</b></td>"
             f"<td style='padding:3px 8px;'>{n_cd45dim:,}</td></tr>",
             f"<tr><td style='padding:3px 8px;'><b>CD34+ dans CD45dim :</b></td>"
@@ -4102,7 +4108,7 @@ class FlowSomAnalyzerPro(QMainWindow):
             f"<td style='padding:3px 8px; color:#94a3b8;'>{gmm_pct:.1f}%</td></tr>",
             f"<tr><td style='padding:3px 8px; color:#94a3b8;'>KDE :</td>"
             f"<td style='padding:3px 8px; color:#94a3b8;'>{kde_pct:.1f}%</td></tr>",
-            f"</table><br>",
+            "</table><br>",
         ]
         if interpretation:
             lines.append(f"<i style='color:{color_ratio};'>{interpretation}</i><br>")

@@ -33,6 +33,17 @@ from .flowsom_plots import (
     plot_mst_plotly,
     plot_som_grid_plotly,
 )
+from .flowsom_native_plots import (
+    plot_stars_native,
+    plot_marker_native,
+    plot_numbers_native,
+    plot_variable_native,
+    plot_2d_scatters_native,
+    plot_flowsommary_native,
+    plot_new_data_stars,
+    plot_subset_stars,
+    generate_all_native_plots,
+)
 from .html_report import generate_html_report, fig_to_base64, plotly_to_html_div
 from .population_viz import (
     plot_blast_heatmap,
@@ -74,6 +85,16 @@ __all__ = [
     "plot_mst_static",
     "plot_mst_plotly",
     "plot_som_grid_plotly",
+    # FlowSOM natif (fs.pl.*)
+    "plot_stars_native",
+    "plot_marker_native",
+    "plot_numbers_native",
+    "plot_variable_native",
+    "plot_2d_scatters_native",
+    "plot_flowsommary_native",
+    "plot_new_data_stars",
+    "plot_subset_stars",
+    "generate_all_native_plots",
     # HTML Report
     "generate_html_report",
     "fig_to_base64",

@@ -18,6 +18,23 @@ if getattr(sys, "frozen", False):
     multiprocessing.freeze_support()
 
 
+# ── PyTorch : éviter WinError 1114 sur c10.dll ────────────────────────────────
+# Cause racine constatée : si Qt (PyQt5) est importé AVANT torch, les DLLs chargées
+# par Qt entrent en conflit avec l'initialisation de c10.dll → "DLL initialization
+# routine failed". torch importé EN PREMIER charge ses DLLs proprement, puis tout
+# le reste (Qt, flowsom, scanpy…) coexiste sans problème.
+# On importe donc torch ici, avant tout import Qt / lourd. L'échec éventuel reste
+# non-fatal : torch_utils dégrade gracieusement en mode CPU/sans-GPU.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+try:
+    import torch as _torch_preload  # noqa: F401  (préchargement DLL avant Qt)
+except Exception as _torch_err:  # noqa: BLE001 — torch optionnel
+    _logging.getLogger("prisma.boot").warning(
+        "Préchargement torch échoué (%s) — mode sans GPU",
+        type(_torch_err).__name__,
+    )
+
+
 def _enable_windows_crisp_rendering() -> None:
     """Request per-monitor DPI awareness to avoid blurry bitmap-scaled UI on Windows."""
     if os.name != "nt":

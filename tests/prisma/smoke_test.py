@@ -124,7 +124,7 @@ def test_phate_strategy_fallback_embedding():
 
 
 def test_harmony_alignment_indices_are_ssc_only():
-    from analysis.batch import _ssc_alignment_indices
+    from clinical_module.legacy_analysis.batch import _ssc_alignment_indices
 
     feature_names = ["FSC-A", "SSC-A", "CD34", "SSC-H", "CD45", "FSC-H"]
     assert _ssc_alignment_indices(feature_names) == [1, 3]

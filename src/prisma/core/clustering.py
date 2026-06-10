@@ -53,6 +53,23 @@ except Exception as _gpu_err:
     _logger.debug("GPUFlowSOMEstimator non disponible (pas de CUDA): %s", _gpu_err)
 
 
+def _real_cuda_available() -> bool:
+    """Vrai uniquement si un GPU CUDA est réellement utilisable.
+
+    Le module GPUFlowSOMEstimator s'importe même sans CUDA et retombe alors sur
+    PyTorch CPU (lent) SANS produire d'objet fs.FlowSOM natif → pas de
+    visualisations natives. On ne préfère donc le backend GPU que si CUDA est
+    réellement présent ; sinon le CPU natif (fs.FlowSOM) est meilleur :
+    plus rapide hors-CUDA et compatible fs.pl.* / new_data / subset.
+    """
+    try:
+        import torch
+
+        return bool(torch.cuda.is_available())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def compute_optimal_rlen(n_cells: int, rlen_setting: Any = "auto") -> int:
     """
     Calcule rlen optimal basé sur la taille du dataset.
@@ -135,6 +152,7 @@ class FlowSOMClusterer:
         self.sigma = sigma
 
         self._fsom_model: Optional[Any] = None
+        self.marker_names_: Optional[List[str]] = None  # noms marqueurs du fit
         self.node_assignments_: Optional[np.ndarray] = None
         self.metacluster_map_: Optional[np.ndarray] = None  # node→metacluster
         self.metacluster_assignments_: Optional[np.ndarray] = None  # cell→metacluster
@@ -176,11 +194,27 @@ class FlowSOMClusterer:
             )
 
         n_cells = X.shape[0]
+        # Mémoriser les noms de marqueurs : requis par new_data()/subset() et les
+        # visualisations natives fs.pl.* (résolution des marqueurs par nom).
+        if marker_names:
+            self.marker_names_ = list(marker_names[: X.shape[1]])
         xdim, ydim = compute_optimal_grid(n_cells, self.xdim, self.ydim)
+        # Synchroniser les dimensions effectives : compute_optimal_grid peut
+        # réduire la grille (ex. 10×10 → 7×7 sur petits datasets). Sans cette
+        # mise à jour, n_nodes/get_grid_coords (fallback) restent désalignés
+        # avec le SOM réellement entraîné → indices node hors limites.
+        self.xdim, self.ydim = xdim, ydim
         rlen = compute_optimal_rlen(n_cells, self.rlen)
 
-        # ── Tentative GPU ──────────────────────────────────────────────
-        if self.use_gpu and _GPU_AVAILABLE and GPUFlowSOMEstimator is not None:
+        # ── Tentative GPU (uniquement si CUDA réellement disponible) ────
+        # Sans CUDA, le GPUSOM tourne en PyTorch CPU (lent) et ne produit pas
+        # d'objet fs.FlowSOM natif → on privilégie alors le backend CPU natif.
+        if (
+            self.use_gpu
+            and _GPU_AVAILABLE
+            and GPUFlowSOMEstimator is not None
+            and _real_cuda_available()
+        ):
             try:
                 self._fsom_model = GPUFlowSOMEstimator(
                     xdim=xdim,
@@ -389,6 +423,81 @@ class FlowSOMClusterer:
     def n_nodes(self) -> int:
         """Nombre total de nodes dans la grille SOM."""
         return self.xdim * self.ydim
+
+    @property
+    def fsom_model(self) -> Optional[Any]:
+        """Objet FlowSOM natif (saeyslab ``fs.FlowSOM``) après ``fit()``.
+
+        Exposé publiquement pour permettre les opérations natives de la
+        librairie : ``new_data()``, ``subset()`` et toutes les fonctions
+        ``fs.pl.*`` (plot_stars, plot_marker, plot_pies, FlowSOMmary…).
+        ``None`` si le backend GPU a été utilisé (pas d'objet fs.FlowSOM).
+        """
+        model = self._fsom_model
+        # Le backend natif expose get_cluster_data ; le GPU non.
+        if model is not None and hasattr(model, "get_cluster_data"):
+            return model
+        return None
+
+    def map_new_data(self, X_new: np.ndarray) -> Optional[Any]:
+        """Mappe de nouvelles données sur le FlowSOM entraîné (``fsom.new_data``).
+
+        Reproduit le workflow saeyslab ::
+
+            fsom_new = fsom.new_data(ff_t[1:200, :])
+
+        Les nouvelles cellules sont assignées aux nœuds/métaclusters existants
+        SANS réentraîner le SOM. Utile pour projeter un échantillon de suivi
+        sur une référence (ex. NBM figée).
+
+        Args:
+            X_new: Matrice (n_new_cells, n_markers) — mêmes marqueurs/ordre que fit().
+
+        Returns:
+            Nouvel objet FlowSOM natif, ou None si backend non natif.
+        """
+        model = self.fsom_model
+        if model is None:
+            _logger.warning("map_new_data indisponible : pas d'objet FlowSOM natif (GPU?).")
+            return None
+        try:
+            import anndata as ad
+
+            adata_new = ad.AnnData(np.asarray(X_new, dtype=np.float32))
+            # Aligner les noms de marqueurs sur le fit, sinon FlowSOM ne retrouve
+            # pas les canaux ("Marker could not be found").
+            if self.marker_names_ and len(self.marker_names_) == adata_new.shape[1]:
+                adata_new.var_names = self.marker_names_
+            return model.new_data(adata_new)
+        except Exception as exc:
+            _logger.warning("map_new_data échoué : %s", exc)
+            return None
+
+    def subset_by_metacluster(self, metacluster_id: int) -> Optional[Any]:
+        """Extrait un sous-FlowSOM pour un métacluster donné (``fsom.subset``).
+
+        Reproduit le workflow saeyslab ::
+
+            fsom_subset = fsom.subset(
+                fsom.get_cell_data().obs["metaclustering"] == 2
+            )
+
+        Args:
+            metacluster_id: Identifiant du métacluster à isoler (0-based interne).
+
+        Returns:
+            Nouvel objet FlowSOM natif restreint, ou None si indisponible.
+        """
+        model = self.fsom_model
+        if model is None:
+            _logger.warning("subset_by_metacluster indisponible : pas d'objet FlowSOM natif (GPU?).")
+            return None
+        try:
+            mask = model.get_cell_data().obs["metaclustering"] == metacluster_id
+            return model.subset(mask)
+        except Exception as exc:
+            _logger.warning("subset_by_metacluster échoué : %s", exc)
+            return None
 
     def get_mfi_matrix(
         self,

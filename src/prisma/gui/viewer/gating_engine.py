@@ -1871,7 +1871,7 @@ class PrismaFlowEngine(QObject if _QT_AVAILABLE else object):  # type: ignore[mi
         """
         quad_ids = list(getattr(gate_obj, "quadrants", {}).keys())
         if not quad_ids:
-            raise PrismaEngineError(f"QuadrantGate sans quadrants définis")
+            raise PrismaEngineError("QuadrantGate sans quadrants définis")
 
         full_df_size = None
         combined = None

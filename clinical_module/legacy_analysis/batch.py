@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from models.experiment import Experiment, ExperimentError
+from prisma.core.models_legacy.experiment import Experiment, ExperimentError
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,8 @@ class HarmonyParams:
 def _ensure_experiment_results(experiment: Experiment) -> Dict[str, Any]:
     """Ajoute un namespace de résultats cohorte si absent."""
     if not hasattr(experiment, "analysis_results"):
-        setattr(experiment, "analysis_results", {})
-    return getattr(experiment, "analysis_results")
+        experiment.analysis_results = {}
+    return experiment.analysis_results
 
 
 def _combined_mask(sample: Any, source_masks: Optional[Sequence[str]]) -> np.ndarray:

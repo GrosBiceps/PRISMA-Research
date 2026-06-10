@@ -8,8 +8,8 @@ Utilise des matrices numpy synthétiques avec des distributions connues.
 import numpy as np
 import pytest
 
-from flowsom_pipeline_pro.src.prisma.core.gating import PreGating
-from flowsom_pipeline_pro.src.prisma.core.auto_gating import GatingSession
+from prisma.core.gating import PreGating
+from prisma.core.auto_gating import GatingSession
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -53,40 +53,40 @@ class TestGateViableCells:
 
     def test_returns_boolean_mask(self, clean_sample):
         X, var_names = clean_sample
-        mask = PreGating.gate_viable_cells(X, var_names)
+        mask = PreGating.gate_viable_cells(X, var_names).unpack()
         assert mask.dtype == bool
         assert mask.shape == (X.shape[0],)
 
     def test_removes_extreme_outliers(self, clean_sample):
         X, var_names = clean_sample
-        mask = PreGating.gate_viable_cells(X, var_names, min_percentile=2.0, max_percentile=98.0)
+        mask = PreGating.gate_viable_cells(X, var_names, min_percentile=2.0, max_percentile=98.0).unpack()
         # Les 10 débris (FSC=100) et 10 saturés (FSC=200k) doivent être exclus
         assert not mask[:10].any(), "Les débris FSC très bas doivent être exclus"
         assert not mask[-10:].any(), "Les saturés FSC très haut doivent être exclus"
 
     def test_keeps_majority_of_clean_cells(self, clean_sample):
         X, var_names = clean_sample
-        mask = PreGating.gate_viable_cells(X, var_names)
+        mask = PreGating.gate_viable_cells(X, var_names).unpack()
         # Au moins 80% des cellules conservées pour un échantillon propre
         assert mask.sum() > 800
 
     def test_all_ones_when_fsc_absent(self, missing_fsc_sample):
         X, var_names = missing_fsc_sample
         # Sans FSC-A, le gate SSC seul peut s'appliquer, mais aucun crash
-        mask = PreGating.gate_viable_cells(X, var_names)
+        mask = PreGating.gate_viable_cells(X, var_names).unpack()
         assert mask.shape == (X.shape[0],)
 
     def test_handles_nan_values(self):
         X = np.array([[np.nan, 1000.0], [50000.0, 30000.0], [60000.0, 25000.0]])
         var_names = ["FSC-A", "SSC-A"]
-        mask = PreGating.gate_viable_cells(X, var_names)
+        mask = PreGating.gate_viable_cells(X, var_names).unpack()
         assert mask.shape == (3,)
         # La ligne NaN ne doit pas crasher
         assert not mask[0], "Une cellule NaN doit être exclue"
 
     def test_empty_array_returns_empty_mask(self):
         X = np.zeros((0, 2))
-        mask = PreGating.gate_viable_cells(X, ["FSC-A", "SSC-A"])
+        mask = PreGating.gate_viable_cells(X, ["FSC-A", "SSC-A"]).unpack()
         assert mask.shape == (0,)
 
 

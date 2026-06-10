@@ -27,8 +27,8 @@ from scipy.spatial.distance import pdist
 from sklearn.linear_model import ElasticNetCV, LassoCV, LogisticRegressionCV
 from sklearn.preprocessing import StandardScaler
 
-from models.experiment import Experiment
-from models.sample import Sample
+from prisma.core.models_legacy.experiment import Experiment
+from prisma.core.models_legacy.sample import Sample
 
 logger = logging.getLogger(__name__)
 

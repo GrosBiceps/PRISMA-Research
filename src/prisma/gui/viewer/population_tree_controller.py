@@ -109,6 +109,10 @@ class PopulationTreeController(QObject):
 
         panel.setMinimumWidth(200)
         panel.setMaximumWidth(320)
+        # Conserver une référence au panneau : il est le parent C++ du QTreeView.
+        # Sans cela, si l'appelant ne stocke pas le retour, Qt détruit le widget
+        # (et son QTreeView enfant) → "wrapped C/C++ object has been deleted".
+        self._panel = panel
         return panel
 
     def set_engine(self, engine: PrismaFlowEngine) -> None:

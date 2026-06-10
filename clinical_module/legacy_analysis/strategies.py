@@ -24,10 +24,10 @@ from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 import numpy as np
 
-from models.sample import Sample
-from models.experiment import Experiment
-from analysis.backends import build_umap, build_tsne
-from analysis.downsampling import random_downsample_df, expand_to_full
+from prisma.core.models_legacy.sample import Sample
+from prisma.core.models_legacy.experiment import Experiment
+from .backends import build_umap, build_tsne
+from prisma.analysis.downsampling import random_downsample_df, expand_to_full
 
 logger = logging.getLogger(__name__)
 
